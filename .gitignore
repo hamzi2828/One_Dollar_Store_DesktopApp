@@ -1,0 +1,17 @@
+# Build output: every bin folder is made by build.cmd (exe, SDK DLL copies,
+# sounds, a config) -- nothing worth versioning.
+bin/
+bin-*/
+
+# The installer build.cmd /installer makes.
+installer/Output/
+
+# Tools compiled from tools\*.cs, and logs copied in for a support case.
+tools/*.exe
+*.log
+
+# Third-party files kept OUT of this public repo (licence): the DigitalPersona
+# fingerprint SDK DLLs and the clock-in / clock-out chimes. Copy them into
+# lib\ and sounds\ before building (see README, "Files not in git").
+lib/*.dll
+sounds/*.mp3

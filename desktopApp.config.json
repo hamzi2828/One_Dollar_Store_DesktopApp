@@ -1,0 +1,6 @@
+{
+    "apiBaseUrl": "https://pos-one-dollar-store-backend.vercel.app/",
+    "deviceName": "",
+    "sound": true,
+    "voice": true
+}
