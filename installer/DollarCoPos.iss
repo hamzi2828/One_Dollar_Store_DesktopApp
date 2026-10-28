@@ -1,9 +1,9 @@
-; DOLLAR & Co Attendance -- the counter PC installer (Inno Setup 6).
+; DollarCoPos -- the counter PC installer (Inno Setup 6).
 ;
 ; Built by `build.cmd /installer`, which compiles the app first and passes the
 ; build's folder, exe name and config file in:
 ;
-;   ISCC.exe /DBinDir=<bin folder> /DExeName=<exe> /DConfigFile=<config.json> DollarCoAttendance.iss
+;   ISCC.exe /DBinDir=<bin folder> /DExeName=<exe> /DConfigFile=<config.json> DollarCoPos.iss
 ;
 ; Run by hand with no /D values it packs ..\bin\ with the shipped config
 ; (..\desktopApp.config.json: the live POS server).
@@ -23,14 +23,14 @@
   #define BinDir "..\bin"
 #endif
 #ifndef ExeName
-  #define ExeName "DollarCoAttendance.exe"
+  #define ExeName "DollarCoPos.exe"
 #endif
 #ifndef ConfigFile
   #define ConfigFile "..\desktopApp.config.json"
 #endif
 
-#define AppName "DOLLAR & Co Attendance"
-; The version comes from the exe (src\AppInfo.cs, 1.1.0 = the Sales button).
+#define AppName "DollarCoPos"
+; The version comes from the exe (src\AppInfo.cs; 1.1.0 = the Sales button, 1.2.0 = renamed DollarCoPos).
 #define AppVersion GetVersionNumbersString(BinDir + "\" + ExeName)
 
 [Setup]
@@ -45,7 +45,7 @@ DefaultDirName={autopf}\DollarCo Attendance
 DefaultGroupName=DOLLAR & Co
 DisableProgramGroupPage=yes
 OutputDir=Output
-OutputBaseFilename=DollarCo-Attendance-Setup
+OutputBaseFilename=DollarCoPos-Setup
 SetupIconFile=..\app.ico
 UninstallDisplayIcon={app}\{#ExeName}
 UninstallDisplayName={#AppName}
@@ -82,6 +82,18 @@ Source: "{#BinDir}\sounds\*"; DestDir: "{app}\sounds"; Flags: ignoreversion recu
 ; Installed only when there is none yet (an upgrade keeps the PC's settings),
 ; never removed on its own, and writable by the PC's users.
 Source: "{#ConfigFile}"; DestDir: "{app}"; DestName: "desktopApp.config.json"; Flags: onlyifdoesntexist uninsneveruninstall; Permissions: users-modify
+
+[InstallDelete]
+; 1.2.0 renamed the app from "DOLLAR & Co Attendance" to DollarCoPos. An upgrade
+; keeps the old install folder (same AppId) but must drop the old exe and the old
+; shortcuts, so only the new name shows. Sign-in, settings and offline punches live
+; in %LOCALAPPDATA%\DollarCoAttendance and are kept.
+Type: files; Name: "{app}\DollarCoAttendance.exe"
+Type: files; Name: "{app}\DollarCoAttendance.exe.config"
+Type: files; Name: "{autoprograms}\DOLLAR & Co Attendance.lnk"
+Type: files; Name: "{autodesktop}\DOLLAR & Co Attendance.lnk"
+Type: files; Name: "{commonstartup}\DOLLAR & Co Attendance.lnk"
+Type: files; Name: "{group}\DOLLAR & Co Attendance.lnk"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#ExeName}"

@@ -8,7 +8,7 @@ using System.Windows.Forms;
 
 namespace DollarCoAttendance
 {
-    // Developer aid: DollarCoAttendance.exe /render <folder>
+    // Developer aid: DollarCoPos.exe /render <folder>
     //
     // Builds each window with sample data (no reader, no server), places it far
     // off-screen and fully transparent for the moment it takes to draw, and

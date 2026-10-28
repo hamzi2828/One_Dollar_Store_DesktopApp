@@ -1,4 +1,4 @@
-# DOLLAR & Co Attendance
+# DollarCoPos
 
 The counter PC's attendance app. Staff clock in and out by putting a finger on
 a **fingerprint reader** — that is the **only** way attendance is marked at
@@ -15,7 +15,7 @@ sends the sales to the server by itself when it comes back (see *Sales*).
             ▼
    ┌────────────────────────────┐        HTTPS: only "who" and "when",
    │  Counter PC                │        never a fingerprint scan
-   │  DOLLAR & Co Attendance    │ ─────────────────────────────────►  POS server
+   │  DollarCoPos    │ ─────────────────────────────────►  POS server
    │  matches the finger HERE   │                                    (/api/desktop)
    └────────────────────────────┘
 ```
@@ -40,7 +40,7 @@ sends the sales to the server by itself when it comes back (see *Sales*).
    the shop that sold it, or HID Global's driver downloads at
    www.hidglobal.com/drivers). Restart the PC if it asks. Plug the reader into a
    USB port **on the PC itself**, not a hub.
-2. **Install the app.** Run **`DollarCo-Attendance-Setup.exe`** and click
+2. **Install the app.** Run **`DollarCoPos-Setup.exe`** and click
    through. It installs to *Program Files\DollarCo Attendance*, puts a shortcut
    on the desktop and in the Start menu, and (ticked) starts the app with
    Windows. If the reader software is missing, the installer says so — install
@@ -64,7 +64,7 @@ sends the sales to the server by itself when it comes back (see *Sales*).
    **Attendance → Edit** (managers and admins usually have these). Admin has
    everything already. Existing roles are not changed by themselves: tick the
    boxes once.
-5. **Sign the counter in — once.** Start *DOLLAR & Co Attendance* and sign in
+5. **Sign the counter in — once.** Start *DollarCoPos* and sign in
    with that manager's POS email and password. The counter stays signed in
    from then on (the sign-in renews itself every day it is used; if the PC is
    left off for more than a week, sign in again).
@@ -226,10 +226,10 @@ and works offline. The very first sign-in on a PC needs the internet.
 **Build** (no Visual Studio: the C# 5 compiler that ships with Windows):
 
 ```
-build.cmd               -> bin\DollarCoAttendance.exe       (desktopApp.config.json: live server)
+build.cmd               -> bin\DollarCoPos.exe       (desktopApp.config.json: live server)
 build-local.cmd         -> bin-local\                       (desktopApp.local.config.json: http://localhost:5000/,
                                                              Sales -> http://localhost:3000/admin/pos)
-build.cmd /installer    -> ...and installer\Output\DollarCo-Attendance-Setup.exe  (Inno Setup 6:
+build.cmd /installer    -> ...and installer\Output\DollarCoPos-Setup.exe  (Inno Setup 6:
                            winget install JRSoftware.InnoSetup)
 ```
 
@@ -250,15 +250,15 @@ older version still works (no `posUrl` → the live POS screen).
 **Checks without a window or a reader:**
 
 ```
-bin\DollarCoAttendance.exe /selftest results.txt
+bin\DollarCoPos.exe /selftest results.txt
     shop-time wording, JSON parsing, template sync merge, https rule, Sales
     address + features switch, DPAPI queue and sign-in on this Windows account,
     fingerprint engine DLLs load
-bin\DollarCoAttendance.exe /apitest <server> <email> <password> results.txt
+bin\DollarCoPos.exe /apitest <server> <email> <password> results.txt
     the app's HTTP code end to end against a TEST server (it records punches --
     never the shop's live server): sign-in, staff, template sync, live + offline
     punches, clientId retry, 48 h limit, board, renew, enrol + remove
-bin\DollarCoAttendance.exe /render <folder>
+bin\DollarCoPos.exe /render <folder>
     draws each window with sample data to PNGs (off-screen) to check the layout
 ```
 
@@ -306,7 +306,7 @@ src/
   Theme.cs  Controls.cs  ReadyPulse.cs  Avatar.cs   black / yellow brand, owner-drawn controls
   Sounds.cs  Voice.cs   chimes, tones, spoken result
   SelfTest.cs  Preview.cs   /selftest, /apitest, /render
-installer/DollarCoAttendance.iss   Inno Setup 6 script
+installer/DollarCoPos.iss   Inno Setup 6 script
 ```
 
 ## Files not in git

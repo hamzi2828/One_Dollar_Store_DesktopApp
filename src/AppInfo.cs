@@ -19,14 +19,14 @@ namespace DollarCoAttendance
     public static class AppInfo
     {
         // BUMP THIS for every build handed to the shop: major.minor.fix.
-        public const string Version = "1.1.0";
+        public const string Version = "1.2.0";
 
-        public const string Name = "DOLLAR & Co Attendance";
+        public const string Name = "DollarCoPos";
         public const string Company = "DOLLAR & Co";
 
         // Sent as the user-agent, so the server log can tell this app's calls
         // apart from the website's.
-        public const string ClientId = "DollarCoAttendanceDesktop/" + Version;
+        public const string ClientId = "DollarCoPosDesktop/" + Version;
 
         public const string Label = "Version " + Version;
 

@@ -8,12 +8,12 @@ namespace DollarCoAttendance
 {
     // Developer checks that need no window and no fingerprint reader:
     //
-    //   DollarCoAttendance.exe /selftest [results.txt]
+    //   DollarCoPos.exe /selftest [results.txt]
     //       shop-time wording, JSON parsing of server answers, template sync
     //       merging, the https rule, DPAPI offline queue + saved sign-in on
     //       this Windows account, and that the fingerprint engine DLLs load.
     //
-    //   DollarCoAttendance.exe /apitest <server> <email> <password> [results.txt]
+    //   DollarCoPos.exe /apitest <server> <email> <password> [results.txt]
     //       the app's own HTTP code against a TEST server (never the shop's
     //       live one -- it records punches): sign-in, staff list, template
     //       sync, live + offline punches, clientId retry, board, renew,

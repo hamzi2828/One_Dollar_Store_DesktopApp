@@ -29,7 +29,7 @@ namespace DollarCoAttendance
                 ShowCrashMessage(ex, e.IsTerminating);
             };
 
-            // Developer checks, no window: DollarCoAttendance.exe /selftest
+            // Developer checks, no window: DollarCoPos.exe /selftest
             // or /apitest <server> <email> <password> (see SelfTest.cs).
             if (args.Length > 0 && (args[0] == "/selftest" || args[0] == "/apitest")) return SelfTest.Run(args);
             if (args.Length > 1 && args[0] == "/render") return Preview.Run(args[1]);

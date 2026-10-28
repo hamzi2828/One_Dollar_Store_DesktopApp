@@ -1,13 +1,13 @@
 @echo off
 REM ---------------------------------------------------------------------------
-REM Build DOLLAR & Co Attendance (the counter PC's fingerprint attendance app).
+REM Build DollarCoPos (the counter PC app: fingerprint attendance + Sales).
 REM
 REM Uses the C# compiler that ships with Windows (.NET Framework 4.x), so
 REM nothing has to be installed to build it: no Visual Studio, no .NET SDK.
 REM
-REM   build.cmd                   -> bin\DollarCoAttendance.exe      (desktopApp.config.json: live server)
+REM   build.cmd                   -> bin\DollarCoPos.exe      (desktopApp.config.json: live server)
 REM   build.cmd <variant>         -> bin-<variant>\                   (desktopApp.<variant>.config.json)
-REM   build.cmd /installer [...]  -> ...then installer\Output\DollarCo-Attendance-Setup.exe
+REM   build.cmd /installer [...]  -> ...then installer\Output\DollarCoPos-Setup.exe
 REM                                  (needs Inno Setup 6: winget install JRSoftware.InnoSetup)
 REM
 REM build-local.cmd = build.cmd local (http://localhost:5000/, a backend on this PC).
@@ -29,7 +29,7 @@ if /i "%~1"=="/installer" (
 
 set "OUTDIR=%HERE%bin"
 set "CONFIG=%HERE%desktopApp.config.json"
-set "EXENAME=DollarCoAttendance.exe"
+set "EXENAME=DollarCoPos.exe"
 if not "%~1"=="" (
     set "OUTDIR=%HERE%bin-%~1"
     set "CONFIG=%HERE%desktopApp.%~1.config.json"
@@ -91,7 +91,7 @@ type "%OUTDIR%\desktopApp.config.json"
 if not "%MAKE_INSTALLER%"=="1" goto :done
 
 REM ---------------------------------------------------------------------------
-REM The installer (installer\DollarCoAttendance.iss): this build's exe, DLLs and
+REM The installer (installer\DollarCoPos.iss): this build's exe, DLLs and
 REM sounds with the build's config (never the output folder's, which may be a
 REM developer's own settings).
 REM ---------------------------------------------------------------------------
@@ -106,12 +106,12 @@ if not defined ISCC (
     exit /b 1
 )
 
-"%ISCC%" /Q "/DBinDir=%OUTDIR%" "/DExeName=%EXENAME%" "/DConfigFile=%CONFIG%" "%HERE%installer\DollarCoAttendance.iss"
+"%ISCC%" /Q "/DBinDir=%OUTDIR%" "/DExeName=%EXENAME%" "/DConfigFile=%CONFIG%" "%HERE%installer\DollarCoPos.iss"
 if errorlevel 1 (
     echo INSTALLER FAILED
     exit /b 1
 )
-echo INSTALLER OK: "%HERE%installer\Output\DollarCo-Attendance-Setup.exe"
+echo INSTALLER OK: "%HERE%installer\Output\DollarCoPos-Setup.exe"
 
 :done
 endlocal
