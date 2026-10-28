@@ -19,7 +19,7 @@ namespace DollarCoAttendance
     public static class AppInfo
     {
         // BUMP THIS for every build handed to the shop: major.minor.fix.
-        public const string Version = "1.2.0";
+        public const string Version = "1.2.1";
 
         public const string Name = "DollarCoPos";
         public const string Company = "DOLLAR & Co";

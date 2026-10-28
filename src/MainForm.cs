@@ -158,7 +158,7 @@ namespace DollarCoAttendance
             readerDot = new StatusDot();
             readerLabel = Theme.Label("READER", Theme.FontLabel, Theme.TextSecondary);
             readerLabel.TextAlign = ContentAlignment.MiddleLeft;
-            connectionLabel = Theme.Label("NO INTERNET", Theme.FontPill, Theme.OnBrand);
+            connectionLabel = Theme.Label("ONLINE", Theme.FontPill, Theme.OnBrand);
             connectionLabel.BackColor = Theme.Warning;
             connectionLabel.TextAlign = ContentAlignment.MiddleCenter;
             connectionLabel.Visible = false;
@@ -254,10 +254,10 @@ namespace DollarCoAttendance
             header.SetBounds(0, 0, w, headerHeight);
             clockLabel.SetBounds(w - P(24) - P(220), P(10), P(220), P(36));
             dateLabel.SetBounds(w - P(24) - P(220), P(46), P(220), P(20));
-            int statusX = clockLabel.Left - P(250);
+            int statusX = clockLabel.Left - P(320);
             readerDot.SetBounds(statusX, P(20), P(14), P(14));
             readerLabel.SetBounds(statusX + P(22), P(16), P(230), P(22));
-            connectionLabel.SetBounds(statusX, P(46), P(240), P(22));
+            connectionLabel.SetBounds(statusX, P(46), P(300), P(22));
 
             int buttonHeight = P(46);
             int buttonsTop = h - margin - buttonHeight;
@@ -503,20 +503,26 @@ namespace DollarCoAttendance
             int waiting = OfflineStore.QueueCount;
             if (serverDown)
             {
-                connectionLabel.Text = waiting > 0 ? "OFFLINE  ·  " + waiting + " WAITING TO SEND" : "NO INTERNET  ·  WORKING OFFLINE";
+                connectionLabel.Text = waiting > 0 ? "OFFLINE  ·  " + waiting + " WAITING TO SEND" : "OFFLINE  ·  NO INTERNET";
+                connectionLabel.BackColor = Theme.Warning;
                 connectionLabel.Visible = true;
                 reader.SetNotice("No connection to the server. Fingerprints still work: each punch is saved on this PC"
                     + (waiting > 0 ? " (" + waiting + " waiting)" : string.Empty) + " and sent when the internet is back.", Theme.Warning);
             }
             else if (waiting > 0)
             {
-                connectionLabel.Text = "SENDING " + waiting + " SAVED PUNCH" + (waiting == 1 ? string.Empty : "ES");
+                connectionLabel.Text = "ONLINE  ·  SENDING " + waiting + " SAVED PUNCH" + (waiting == 1 ? string.Empty : "ES");
+                connectionLabel.BackColor = Theme.Info;
                 connectionLabel.Visible = true;
                 reader.SetNotice("Sending " + waiting + " punch" + (waiting == 1 ? string.Empty : "es") + " saved while offline...", Theme.Warning);
             }
             else
             {
-                connectionLabel.Visible = false;
+                // Always on show, so the counter can see at a glance that the
+                // server is reachable (green) or not (amber, above).
+                connectionLabel.Text = "ONLINE";
+                connectionLabel.BackColor = Theme.Success;
+                connectionLabel.Visible = true;
                 reader.SetNotice(null, Theme.Neutral);
             }
         }
@@ -1202,8 +1208,9 @@ namespace DollarCoAttendance
             readerConnected = readerReady;
             readerChecked = true;
             serverDown = offline;
-            connectionLabel.Visible = offline;
-            connectionLabel.Text = "OFFLINE  ·  2 WAITING TO SEND";
+            connectionLabel.Visible = true;
+            connectionLabel.Text = offline ? "OFFLINE  ·  2 WAITING TO SEND" : "ONLINE";
+            connectionLabel.BackColor = offline ? Theme.Warning : Theme.Success;
             if (offline) reader.SetNotice("No connection to the server. Fingerprints still work: each punch is saved on this PC (2 waiting) and sent when the internet is back.", Theme.Warning);
             readerDot.DotColor = readerReady ? Theme.Success : Theme.Danger;
             readerLabel.Text = readerReady ? "READER READY" : "READER NOT CONNECTED";
