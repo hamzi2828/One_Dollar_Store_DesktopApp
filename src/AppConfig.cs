@@ -14,9 +14,13 @@ namespace DollarCoAttendance
     //   {
     //     "apiBaseUrl": "https://pos-one-dollar-store-backend.vercel.app/",
     //     "deviceName": "Counter PC",
+    //     "posUrl": "https://pos-one-dollar-store-frontend.vercel.app/admin/pos",
     //     "sound": true,
     //     "voice": true
     //   }
+    //
+    // Every key may be missing (a config from an older build has no posUrl):
+    // a missing key takes its default.
     //
     // "readerPriority": "low" may be added by hand (see the README): it asks
     // the reader driver for events even while another window is in front.
@@ -26,7 +30,11 @@ namespace DollarCoAttendance
         // file cannot be read).
         public const string LiveServer = "https://pos-one-dollar-store-backend.vercel.app/";
 
+        // The POS screen the Sales button opens (the website, in an Edge app window).
+        public const string LivePosUrl = "https://pos-one-dollar-store-frontend.vercel.app/admin/pos";
+
         public string ApiBaseUrl;
+        public string PosUrl = LivePosUrl;
         public string DeviceName;
         public bool SoundOn = true;
         public bool VoiceOn = true;
@@ -95,6 +103,19 @@ namespace DollarCoAttendance
             }
         }
 
+        // Why `url` may not be used as the POS screen's address, or null when it
+        // may: a full http(s) address, https unless the website runs on this PC.
+        public static string PosUrlProblem(string url)
+        {
+            Uri parsed;
+            if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out parsed)
+                || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) || parsed.Host.Length == 0)
+                return "The POS screen address must be a full web address, e.g. " + LivePosUrl;
+            if (parsed.Scheme == Uri.UriSchemeHttp && !IsLocalHost(parsed.Host))
+                return "The POS screen address must start with https:// (plain http:// only for a website on this PC).";
+            return null;
+        }
+
         public static string NormalizeBaseUrl(string url)
         {
             string value = (url ?? string.Empty).Trim();
@@ -113,7 +134,7 @@ namespace DollarCoAttendance
 
         // Writes the settings, keeping any other keys already in the file.
         // Returns null on success, otherwise why it could not be written.
-        public static string Save(string apiBaseUrl, string deviceName, bool soundOn, bool voiceOn)
+        public static string Save(string apiBaseUrl, string deviceName, string posUrl, bool soundOn, bool voiceOn)
         {
             string path = FilePath;
             try
@@ -128,6 +149,7 @@ namespace DollarCoAttendance
 
                 data["apiBaseUrl"] = apiBaseUrl ?? string.Empty;
                 data["deviceName"] = deviceName ?? string.Empty;
+                data["posUrl"] = posUrl ?? LivePosUrl;
                 data["sound"] = soundOn;
                 data["voice"] = voiceOn;
 
@@ -183,6 +205,11 @@ namespace DollarCoAttendance
                 if (!string.IsNullOrEmpty(url)) config.ApiBaseUrl = url;
                 string device = Text(data, "deviceName");
                 if (!string.IsNullOrEmpty(device)) config.DeviceName = device;
+                // Older configs have no posUrl, and a bad one must not stop the
+                // Sales button: both fall back to the live POS screen.
+                string pos = Text(data, "posUrl");
+                if (!string.IsNullOrEmpty(pos) && PosUrlProblem(pos) == null) config.PosUrl = pos;
+                else if (!string.IsNullOrEmpty(pos)) Log.Info("posUrl in the settings is not usable, using " + LivePosUrl + ": " + pos);
                 config.SoundOn = Flag(data, "sound", true);
                 config.VoiceOn = Flag(data, "voice", true);
                 config.ReaderLowPriority = string.Equals(Text(data, "readerPriority"), "low", StringComparison.OrdinalIgnoreCase);

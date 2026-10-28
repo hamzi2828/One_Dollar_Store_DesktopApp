@@ -18,6 +18,11 @@ namespace DollarCoAttendance
         public bool CanPunch;    // attendance_kiosk create: mark attendance
         public bool CanEnroll;   // employees edit or attendance edit
 
+        // features.sales (desktop_pos view): show the Sales button. True when
+        // the server does not send `features` (an older server) so the button
+        // is never lost by an upgrade on one side only.
+        public bool SalesEnabled = true;
+
         // What the counter needs: without both, it cannot do its job.
         public bool CanRunDesk { get { return CanView && CanPunch; } }
 
@@ -35,6 +40,8 @@ namespace DollarCoAttendance
             s.CanView = Json.Bool(data, "canView");
             s.CanPunch = Json.Bool(data, "canPunch");
             s.CanEnroll = Json.Bool(data, "canEnroll");
+            Dictionary<string, object> features = Json.Obj(data, "features");
+            if (features != null && features.ContainsKey("sales")) s.SalesEnabled = Json.Bool(features, "sales");
             return s.Id == null ? null : s;
         }
 
@@ -51,6 +58,9 @@ namespace DollarCoAttendance
             data["canView"] = CanView;
             data["canPunch"] = CanPunch;
             data["canEnroll"] = CanEnroll;
+            var features = new Dictionary<string, object>();
+            features["sales"] = SalesEnabled;
+            data["features"] = features;
             return data;
         }
 

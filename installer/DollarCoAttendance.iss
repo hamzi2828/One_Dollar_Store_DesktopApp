@@ -12,6 +12,8 @@
 ;     shortcut (ticked) and "start with Windows" (ticked: it is the counter's app);
 ;   * the settings file is installed once and kept on upgrade, and the PC's
 ;     users may change it (the app's Settings window writes it beside the exe);
+;     an older settings file without "posUrl" (the Sales button, 1.1.0+) still
+;     works: the app falls back to the live POS screen;
 ;   * says plainly when the DigitalPersona reader software is missing (it is
 ;     not bundled -- it is the reader maker's to distribute);
 ;   * uninstall keeps this PC's sign-in, offline copies and unsent punches
@@ -28,6 +30,7 @@
 #endif
 
 #define AppName "DOLLAR & Co Attendance"
+; The version comes from the exe (src\AppInfo.cs, 1.1.0 = the Sales button).
 #define AppVersion GetVersionNumbersString(BinDir + "\" + ExeName)
 
 [Setup]

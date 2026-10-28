@@ -1,6 +1,7 @@
 {
     "apiBaseUrl": "http://localhost:5000/",
     "deviceName": "Dev PC",
+    "posUrl": "http://localhost:3000/admin/pos",
     "sound": true,
     "voice": true
 }

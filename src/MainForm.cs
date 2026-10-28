@@ -104,6 +104,8 @@ namespace DollarCoAttendance
         private BoardPanel boardPanel;
         private BlockedPanel blockedPanel;
         private RoundButton enrollButton;
+        private RoundButton salesButton;
+        private bool salesShown = true;   // features.sales (Control.Visible reads false until the form shows)
         private RoundButton refreshButton;
         private RoundButton settingsButton;
         private RoundButton signOutButton;
@@ -173,6 +175,10 @@ namespace DollarCoAttendance
 
             enrollButton = Theme.QuietButton("Enroll fingerprints", Theme.Brand);
             enrollButton.Click += Enroll_Click;
+            // The POS screen in its own Edge window (PosLauncher). Works with no
+            // reader and no internet: it asks the server nothing first.
+            salesButton = Theme.QuietButton("Sales", Theme.BrandGreen);
+            salesButton.Click += Sales_Click;
             refreshButton = Theme.QuietButton("Refresh", Theme.TextSecondary);
             refreshButton.Click += delegate
             {
@@ -189,6 +195,7 @@ namespace DollarCoAttendance
             Controls.Add(reader);
             Controls.Add(boardPanel);
             Controls.Add(enrollButton);
+            Controls.Add(salesButton);
             Controls.Add(refreshButton);
             Controls.Add(settingsButton);
             Controls.Add(signOutButton);
@@ -263,7 +270,13 @@ namespace DollarCoAttendance
 
             int bw = P(210);
             enrollButton.SetBounds(margin, buttonsTop, bw, buttonHeight);
-            refreshButton.SetBounds(margin + bw + P(12), buttonsTop, P(150), buttonHeight);
+            int next = enrollButton.Right + P(12);
+            if (salesShown)
+            {
+                salesButton.SetBounds(next, buttonsTop, P(150), buttonHeight);
+                next = salesButton.Right + P(12);
+            }
+            refreshButton.SetBounds(next, buttonsTop, P(150), buttonHeight);
             signOutButton.SetBounds(w - margin - P(150), buttonsTop, P(150), buttonHeight);
             settingsButton.SetBounds(signOutButton.Left - P(12) - P(150), buttonsTop, P(150), buttonHeight);
             header.Invalidate();
@@ -273,6 +286,13 @@ namespace DollarCoAttendance
         {
             header.Subtitle = (session != null ? session.HeaderLine() : string.Empty) + "   ·   " + config.DeviceLabel;
             enrollButton.Enabled = !blocked;
+            bool sales = session == null || session.SalesEnabled;
+            if (salesShown != sales)
+            {
+                salesShown = sales;
+                salesButton.Visible = sales;
+                Relayout();
+            }
         }
 
         // The header clock (shop time, from the server's clock) and the
@@ -585,7 +605,7 @@ namespace DollarCoAttendance
             {
                 Log.Info("The account lost the Attendance desktop app permission");
                 EndSession(true, "This account is no longer allowed to run the attendance app (its role needs "
-                    + "\"Attendance desktop app\" view + create). Sign in with another account.");
+                    + "\"Desktop app → Attendance (fingerprint)\" view + create). Sign in with another account.");
                 return null;
             }
             session = refreshed;
@@ -742,6 +762,12 @@ namespace DollarCoAttendance
                 BeginLoad(LoadParts.Templates | LoadParts.Staff | LoadParts.Board, "Updating the fingerprint list...");
             }
             ShowReaderState();
+        }
+
+        private void Sales_Click(object sender, EventArgs e)
+        {
+            string problem = PosLauncher.Open(config.PosUrl);
+            if (problem != null) boardPanel.ShowNote(problem, Theme.Danger);
         }
 
         private void SignOut_Click(object sender, EventArgs e)
@@ -1115,7 +1141,7 @@ namespace DollarCoAttendance
             string message = status == 401
                 ? "The counter's sign-in has expired. A manager needs to sign in again."
                 : "The server refused this account: " + (Json.Message(result) ?? "no permission") + ". Sign in with an account that has "
-                    + "\"Attendance desktop app\" permission.";
+                    + "\"Desktop app → Attendance (fingerprint)\" permission.";
             Log.Info("Session ended by the server: HTTP " + status + " " + (Json.Message(result) ?? string.Empty));
             EndSession(true, message);
         }

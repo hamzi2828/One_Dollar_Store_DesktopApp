@@ -5,6 +5,10 @@ a **fingerprint reader** — that is the **only** way attendance is marked at
 DOLLAR & Co. The app talks to the same POS server as the admin panel, so every
 punch shows up straight away under **HR → Attendance**, and payroll uses it.
 
+It also has a **Sales** button that opens the POS selling screen in its own
+window on the same PC. That screen keeps selling when the internet drops and
+sends the sales to the server by itself when it comes back (see *Sales*).
+
 ```
    Fingerprint reader (USB)
             │
@@ -26,7 +30,8 @@ punch shows up straight away under **HR → Attendance**, and payroll uses it.
 | .NET Framework 4.x | Already part of Windows 10 and 11 — nothing to install |
 | Fingerprint reader | **Required.** A DigitalPersona USB reader (U.are.U 4000/4500 family) **plus** its software: *DigitalPersona One Touch for Windows runtime (64-bit)*. Without the reader, attendance cannot be marked. |
 | Internet | Needed for the first sign-in and for enrolling fingers. After that the counter keeps working when the internet drops (see *No internet*). |
-| A manager / admin account | The POS email and password of an account whose role has **Attendance desktop app** (View + Create). See step 4. |
+| A manager / admin account | The POS email and password of an account whose role has **Desktop app → Attendance (fingerprint)** (View + Create). See step 4. |
+| Microsoft Edge | For the **Sales** button. Already part of Windows 10 and 11 (Chrome or any browser works too). |
 
 ## 2. Install (once)
 
@@ -47,10 +52,18 @@ punch shows up straight away under **HR → Attendance**, and payroll uses it.
    itself, open *Device Manager*, find the reader and each *USB Root Hub*, and
    on *Power Management* untick *Allow the computer to turn off this device*.
 4. **Give a manager account the permission.** In the admin panel open
-   **Roles**, edit the manager's (or admin's) role and tick **Attendance
-   desktop app → View and Create**. To enroll fingerprints the account also
-   needs **Employees → Edit** or **Attendance → Edit** (managers and admins
-   usually have these).
+   **Roles**, edit the manager's (or admin's) role and, under the **Desktop
+   app** section, tick:
+   * **Attendance (fingerprint) → View and Create** — needed to sign the
+     counter in and mark attendance.
+   * **Sales on the counter PC (works offline) → View and Create** — shows the
+     **Sales** button and lets that PC sell with no internet and upload those
+     sales later. Without it the Sales button is hidden.
+
+   To enroll fingerprints the account also needs **Employees → Edit** or
+   **Attendance → Edit** (managers and admins usually have these). Admin has
+   everything already. Existing roles are not changed by themselves: tick the
+   boxes once.
 5. **Sign the counter in — once.** Start *DOLLAR & Co Attendance* and sign in
    with that manager's POS email and password. The counter stays signed in
    from then on (the sign-in renews itself every day it is used; if the PC is
@@ -58,11 +71,13 @@ punch shows up straight away under **HR → Attendance**, and payroll uses it.
 6. **Name the PC.** *Settings* (bottom right) → *This PC's name*, e.g.
    `Counter PC`. The name is stored with every punch ("fingerprint · Counter
    PC") so the admin panel shows where it came from. Sound and the spoken
-   result can be switched off here too.
+   result can be switched off here too. *Sales screen address* is the page
+   the Sales button opens; leave it as it is
+   (`https://pos-one-dollar-store-frontend.vercel.app/admin/pos`).
 7. **Enroll everyone's fingers** (next section), then test: one touch should
    show the person's name at once and then **IN** with the time.
 
-The version is shown on the sign-in and Settings windows (*Version 1.0.0*).
+The version is shown on the sign-in and Settings windows (*Version 1.1.0*).
 
 ## 3. Enroll fingerprints (managers only)
 
@@ -138,6 +153,21 @@ screen turns red: **Fingerprint reader not connected — attendance can't be
 marked**. Plug it back in; the message goes away by itself. Missed punches →
 *Correct times* as above.
 
+### Sales
+
+Press **Sales** (bottom, green) to open the POS selling screen. It opens in its
+own Microsoft Edge window (no tabs, no address bar, full screen) with its own
+saved sign-in, separate from anyone's normal browsing. Sign in to it once with a
+cashier's or manager's POS account; it stays signed in.
+
+* Pressing **Sales** again just brings that window to the front.
+* It opens even with **no internet**: the app does not check anything first.
+  The selling screen then works from its offline copy and keeps the sales on
+  this PC until the internet is back (see the POS screen's *Offline* badge).
+* No Edge on the PC? It uses Chrome, or else the normal web browser.
+* The button is hidden when the signed-in counter account's role does not have
+  **Desktop app → Sales on the counter PC**.
+
 ## 5. No internet
 
 Fingerprints keep working without the internet:
@@ -169,7 +199,7 @@ and works offline. The very first sign-in on a PC needs the internet.
 | *No fingerprints enrolled yet* | A manager enrolls staff (section 3). |
 | Touching the reader does nothing while another program is in front | Close the app, open `desktopApp.config.json` (in the app folder) in Notepad as administrator, add `"readerPriority": "low",` on its own line, save, start the app. |
 | *OFFLINE* in the header | The PC can't reach the server. Check the internet; it clears by itself. |
-| *This account cannot run the attendance app* | The role needs **Attendance desktop app → View + Create** (install step 4). |
+| *This account cannot run the attendance app* | The role needs **Desktop app → Attendance (fingerprint) → View + Create** (install step 4). |
 | *This account cannot enroll fingerprints* | The manager's role needs **Employees → Edit** or **Attendance → Edit**. |
 | *The counter's sign-in has expired* | A manager signs in again. |
 | *This PC's clock is … minutes off* | Fix the clock (Windows Settings → Time & language). Attendance is still right: the app uses the server's time. |
@@ -197,7 +227,8 @@ and works offline. The very first sign-in on a PC needs the internet.
 
 ```
 build.cmd               -> bin\DollarCoAttendance.exe       (desktopApp.config.json: live server)
-build-local.cmd         -> bin-local\                       (desktopApp.local.config.json: http://localhost:5000/)
+build-local.cmd         -> bin-local\                       (desktopApp.local.config.json: http://localhost:5000/,
+                                                             Sales -> http://localhost:3000/admin/pos)
 build.cmd /installer    -> ...and installer\Output\DollarCo-Attendance-Setup.exe  (Inno Setup 6:
                            winget install JRSoftware.InnoSetup)
 ```
@@ -206,14 +237,23 @@ build.cmd /installer    -> ...and installer\Output\DollarCo-Attendance-Setup.exe
 (`DPFP*.dll`, `dpHFtrEx.dll`, `dpHMatch.dll`), copied beside the exe by the
 build. A config already in the output folder is kept (it is that PC's own
 settings). Bump `AppInfo.Version` in `src\AppInfo.cs` for every build handed to
-the shop. `app.ico` and the logo in the app and installer come from the website logo files (`tools\make_brand.py`).
+the shop. `app.ico`, `assets\logo.png` (the full *DOLLAR & Co* on its own dark rounded
+plate, so the white *Co* shows on any background), `assets\icon-1024.png`
+(*D&* over *Co*) and the installer pictures are made by
+`python tools\make_brand.py ..\pos_frontend\public\images\logo.png assets` (needs Pillow).
+
+**Config** (`desktopApp.config.json` beside the exe; the Settings window edits it):
+`apiBaseUrl` (POS server), `deviceName`, `posUrl` (the page the Sales button
+opens), `sound`, `voice`. A missing key takes its default, so a config from an
+older version still works (no `posUrl` → the live POS screen).
 
 **Checks without a window or a reader:**
 
 ```
 bin\DollarCoAttendance.exe /selftest results.txt
-    shop-time wording, JSON parsing, template sync merge, https rule, DPAPI queue
-    and sign-in on this Windows account, fingerprint engine DLLs load
+    shop-time wording, JSON parsing, template sync merge, https rule, Sales
+    address + features switch, DPAPI queue and sign-in on this Windows account,
+    fingerprint engine DLLs load
 bin\DollarCoAttendance.exe /apitest <server> <email> <password> results.txt
     the app's HTTP code end to end against a TEST server (it records punches --
     never the shop's live server): sign-in, staff, template sync, live + offline
@@ -227,7 +267,7 @@ bin\DollarCoAttendance.exe /render <folder>
 | Endpoint | Permission | Use |
 |---|---|---|
 | `POST /user/login` | — | sign-in (email + password → JWT, 7 days) |
-| `GET /api/desktop/session` | signed in | who, `canView` / `canPunch` / `canEnroll` |
+| `GET /api/desktop/session` | signed in | who, `canView` / `canPunch` / `canEnroll`, `features: { attendance, sales }` (`sales` = desktop_pos view: show the Sales button; no `features` from an older server → shown) |
 | `POST /api/desktop/session/renew` | attendance_kiosk view | fresh 7-day token (the app renews daily) |
 | `GET /api/desktop/employees` | attendance_kiosk / attendance / employees view | names, code, designation, photo, fingers on file, in/out now |
 | `GET /api/desktop/fingerprints[?updatedSince=ISO]` | attendance_kiosk view | templates for local 1:N matching; incremental: changed + `removed` + `employeeIds` |
@@ -246,7 +286,8 @@ Backend tests (in-memory MongoDB harness, never the real database):
 src/
   Program.cs            single instance, crash handlers, sign-in <-> counter window
   AppInfo.cs  Log.cs    version; %LOCALAPPDATA%\DollarCoAttendance\attendance.log
-  AppConfig.cs          desktopApp.config.json (server, PC name, sound, voice)
+  AppConfig.cs          desktopApp.config.json (server, PC name, Sales screen address, sound, voice)
+  PosLauncher.cs        Sales button: POS screen in an Edge app window (Chrome / default browser fallback)
   ApiClient.cs          JSON over HTTPS (+ Json helpers, server clock from Date header)
   ShopTime.cs           PKT times and wording ("9:58 am", "7 h 35 m")
   TokenStore.cs         DPAPI-saved sign-in, one per server

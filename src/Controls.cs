@@ -48,8 +48,10 @@ namespace DollarCoAttendance
             }
         }
 
-        // The shop's logo (assets\logo.png from the website, embedded by build.cmd,
-        // transparent background). Null only if the build left it out.
+        // The shop's logo (assets\logo.png, made by tools\make_brand.py from the
+        // website logo, embedded by build.cmd): the whole "DOLLAR & Co" on its own
+        // near-black rounded plate, so the white "Co" shows on any background.
+        // Null only if the build left it out.
         private static Image logo;
         private static bool logoTried;
         public static Image Logo
@@ -70,13 +72,16 @@ namespace DollarCoAttendance
             }
         }
 
-        // Draws the DOLLAR & Co logo in a band `height` tall, its letters about as
-        // tall as the old text wordmark. Returns the width drawn.
+        // Draws the DOLLAR & Co logo (plate included) in a band `height` tall;
+        // its letters come out about as tall as the text wordmark. Returns the
+        // width drawn.
+        private const double LogoScale = 1.0;
+
         public static int Wordmark(Graphics g, Font font, Point at, int height)
         {
             Image img = Logo;
             if (img == null) return TextWordmark(g, font, at, height);
-            int h = (int)Math.Round(height * 0.74);
+            int h = (int)Math.Round(height * LogoScale);
             int w = (int)Math.Round(h * (double)img.Width / img.Height);
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -88,7 +93,7 @@ namespace DollarCoAttendance
         {
             Image img = Logo;
             if (img == null) return TextWordmarkWidth(g, font);
-            int h = (int)Math.Round(height * 0.74);
+            int h = (int)Math.Round(height * LogoScale);
             return (int)Math.Round(h * (double)img.Width / img.Height);
         }
 

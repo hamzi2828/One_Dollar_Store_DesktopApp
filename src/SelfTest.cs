@@ -137,6 +137,18 @@ namespace DollarCoAttendance
             Check(AppConfig.InsecureAddressProblem("http://localhost:5000/") == null && AppConfig.InsecureAddressProblem(AppConfig.LiveServer) == null,
                 "localhost and the live https server are allowed");
 
+            // Sales button: the POS screen address and the server's feature switch.
+            Check(AppConfig.PosUrlProblem(AppConfig.LivePosUrl) == null && AppConfig.PosUrlProblem("http://localhost:3000/admin/pos") == null
+                && AppConfig.PosUrlProblem("http://example.com/admin/pos") != null && AppConfig.PosUrlProblem("not a url") != null,
+                "POS screen address: live https and localhost allowed, plain http elsewhere and junk refused");
+            Check(new AppConfig().PosUrl == AppConfig.LivePosUrl, "a config without posUrl opens the live POS screen");
+            SessionUser oldServer = SessionUser.From(Json.Data(Parse("{\"data\":{\"user\":{\"id\":\"u\"},\"canView\":true}}")));
+            SessionUser noSales = SessionUser.From(Json.Data(Parse("{\"data\":{\"user\":{\"id\":\"u\"},\"features\":{\"attendance\":true,\"sales\":false}}}")));
+            SessionUser sales = SessionUser.From(Json.Data(Parse("{\"data\":{\"user\":{\"id\":\"u\"},\"features\":{\"attendance\":true,\"sales\":true}}}")));
+            Check(oldServer.SalesEnabled && !noSales.SalesEnabled && sales.SalesEnabled,
+                "Sales button: shown without features (older server), follows features.sales otherwise");
+            Check(!SessionUser.From(noSales.ToDictionary()).SalesEnabled, "the offline copy of the sign-in keeps features.sales");
+
             // JWT expiry claim.
             string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"id\":\"x\",\"exp\":1792800000}")).TrimEnd('=').Replace('+', '-').Replace('/', '_');
             DateTime? exp = SignInOutcome.TokenExpiry("eyJhbGciOiJIUzI1NiJ9." + payload + ".sig");

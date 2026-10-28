@@ -15,7 +15,7 @@ namespace DollarCoAttendance
 
     // Signs the counter in ONCE with a manager's or admin's POS email and
     // password (POST /user/login, the same account as the admin panel). The
-    // account's role must have "Attendance desktop app" (attendance_kiosk) view
+    // account's role must have "Desktop app → Attendance (fingerprint)" (attendance_kiosk) view
     // and create; anything less is refused here, before the token is kept.
     //
     // It also fronts for a saved sign-in the app could not confirm at start-up
@@ -227,7 +227,7 @@ namespace DollarCoAttendance
     }
 
     // One email + password sign-in, checked against what the window needs:
-    // the counter (needs "Attendance desktop app" view + create) or the
+    // the counter (needs "Desktop app → Attendance (fingerprint)" view + create) or the
     // enrolment window (needs employees edit or attendance edit).
     public class SignInOutcome
     {
@@ -280,7 +280,7 @@ namespace DollarCoAttendance
             if (!forEnrolment && !user.CanRunDesk)
             {
                 outcome.Message = "This account cannot run the attendance app. In the admin panel (Roles), give its role "
-                    + "\"Attendance desktop app\" with View and Create, then sign in again.";
+                    + "\"Desktop app → Attendance (fingerprint)\" with View and Create, then sign in again.";
                 return outcome;
             }
 
