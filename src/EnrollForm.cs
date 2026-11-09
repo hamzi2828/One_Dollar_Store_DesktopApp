@@ -22,9 +22,13 @@ namespace DollarCoAttendance
     // Before saving, the new finger is matched against every finger already on
     // file: one finger can belong to only one person, or the reader would refuse
     // both of them for good.
-    public class EnrollForm : Form, DPFP.Capture.EventHandler
+    public class EnrollForm : Form, IReaderEvents
     {
-        private const int RequiredScans = 4;
+        // Good scans of the finger: 4 on a DigitalPersona reader, 3 on a SecuGen.
+        private readonly int RequiredScans;
+        private readonly ReaderBrand readerBrand;
+        private readonly FingerEngine engine;
+        private readonly bool readerLowPriority;
 
         private readonly ApiClient deskApi;
         private readonly TemplateSet knownTemplates;
@@ -38,9 +42,9 @@ namespace DollarCoAttendance
         private readonly List<TemplateCandidate> linkedHere = new List<TemplateCandidate>();
         private readonly HashSet<string> removedHere = new HashSet<string>();
 
-        private DPFP.Capture.Capture capturer;
-        private List<DPFP.FeatureSet> acceptedScans = new List<DPFP.FeatureSet>();
-        private List<DPFP.FeatureSet> checkScans = new List<DPFP.FeatureSet>();
+        private FingerReader capturer;
+        private List<object> acceptedScans = new List<object>();
+        private List<object> checkScans = new List<object>();
         private int attempts;
         private volatile bool capturing;
         private volatile bool processing;
@@ -49,6 +53,11 @@ namespace DollarCoAttendance
         private volatile bool changedAny;
         // Read by the main window after the dialog closes: pull the fingerprint list again.
         public bool ChangedAny { get { return changedAny; } }
+
+        // Staff who got a finger saved in this window: the counter does not clock
+        // them in on the scans that follow (registering is not clocking in).
+        private readonly HashSet<string> enrolledIds = new HashSet<string>();
+        public IEnumerable<string> EnrolledIds { get { lock (enrolledIds) return new List<string>(enrolledIds); } }
 
         // ---- page 1: manager sign-in ----
         private Panel signInPage;
@@ -76,8 +85,13 @@ namespace DollarCoAttendance
         private AlertBox statusBox;
         private RoundButton closeButton;
 
-        public EnrollForm(ApiClient deskApi, SessionUser deskUser, StaffDirectory directory, TemplateSet knownTemplates, string deviceName)
+        public EnrollForm(ApiClient deskApi, SessionUser deskUser, StaffDirectory directory, TemplateSet knownTemplates, string deviceName,
+            ReaderBrand readerBrand, bool readerLowPriority)
         {
+            this.readerBrand = readerBrand;
+            this.readerLowPriority = readerLowPriority;
+            engine = FingerEngine.For(readerBrand);
+            RequiredScans = engine.ScansToEnroll;
             this.deskApi = deskApi;
             this.directory = directory ?? StaffDirectory.Empty;
             this.knownTemplates = knownTemplates;
@@ -245,7 +259,7 @@ namespace DollarCoAttendance
                 enrolPage.Controls.Add(remove);
             }
 
-            addTitle = Theme.Label("2. FINGER (pick one, then scan it 4 times)", Theme.FontLabel, Theme.Brand);
+            addTitle = Theme.Label("2. FINGER (pick one, then scan it " + RequiredScans + " times)", Theme.FontLabel, Theme.Brand);
             addTitle.SetBounds(x, P(236), width, P(16));
             // Two hands as two rows of five buttons -- touch-friendly, and a
             // finger already on file says so.
@@ -411,8 +425,12 @@ namespace DollarCoAttendance
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 
             int left = circle.Right + P(10);
-            int count = FingersOf(m).Count;
-            string badge = count == 0 ? "NO FINGER" : count + (count == 1 ? " FINGER" : " FINGERS");
+            List<string> onFile = FingersOf(m);
+            int count = onFile.Count;
+            // Which fingers are on file, e.g. "R INDEX · L THUMB" (owner 2026-11-09).
+            string badge = count == 0
+                ? "NO FINGER"
+                : string.Join(" · ", onFile.Select(f => (f.StartsWith("left") ? "L " : "R ") + Fingers.ShortLabel(f)).ToArray()).ToUpperInvariant();
             Size badgeSize = TextRenderer.MeasureText(g, badge, Theme.FontPill);
             var badgeBox = new Rectangle(e.Bounds.Right - P(10) - badgeSize.Width - P(12), e.Bounds.Y + P(14), badgeSize.Width + P(12), P(20));
             Draw.FillRounded(g, badgeBox, P(10), count == 0 ? Theme.WarningSoft : Theme.SuccessSoft);
@@ -502,7 +520,7 @@ namespace DollarCoAttendance
             startButton.Text = replacing ? "3. Scan " + Fingers.Label(key).ToLowerInvariant() + " again (replaces it)" : "3. Start scanning " + Fingers.Label(key).ToLowerInvariant();
             ShowStatus(replacing
                 ? "The " + Fingers.Label(key).ToLowerInvariant() + " on file will be replaced by the new scans."
-                : "Ready: " + selected.Name + "'s " + Fingers.Label(key).ToLowerInvariant() + ". Press Start, then scan it 4 times.", Theme.Neutral);
+                : "Ready: " + selected.Name + "'s " + Fingers.Label(key).ToLowerInvariant() + ". Press Start, then scan it " + RequiredScans + " times.", Theme.Neutral);
         }
 
         // ------------------------------------------------------------ remove
@@ -556,8 +574,8 @@ namespace DollarCoAttendance
                     + "Close this window, wait until the counter shows \"Place your finger\", then try again.", Theme.Danger);
                 return;
             }
-            acceptedScans = new List<DPFP.FeatureSet>();
-            checkScans = new List<DPFP.FeatureSet>();
+            acceptedScans = new List<object>();
+            checkScans = new List<object>();
             attempts = 0;
             UpdateProgress(0);
             capturing = true;
@@ -566,12 +584,8 @@ namespace DollarCoAttendance
                 + " flat on the reader.", Theme.Brand);
             try
             {
-                if (capturer == null)
-                {
-                    capturer = new DPFP.Capture.Capture();
-                    capturer.EventHandler = this;
-                }
-                capturer.StartCapture();
+                if (capturer == null) capturer = FingerReader.Create(readerBrand, this, readerLowPriority, SecuGenEngine.EnrollQuality);
+                capturer.Start();
             }
             catch (Exception ex)
             {
@@ -579,13 +593,13 @@ namespace DollarCoAttendance
                 capturing = false;
                 SetBusyUi(false);
                 ShowStatus("The fingerprint reader is not available: " + ex.Message + Environment.NewLine
-                    + "Check the USB cable and that the DigitalPersona software is installed.", Theme.Danger);
+                    + "Check the USB cable and that the " + ReaderSetup.Label(readerBrand) + " reader software is installed.", Theme.Danger);
             }
         }
 
         private void StopCapture()
         {
-            try { if (capturer != null) capturer.StopCapture(); }
+            try { if (capturer != null) capturer.Stop(); }
             catch { }
         }
 
@@ -607,9 +621,9 @@ namespace DollarCoAttendance
             }
         }
 
-        // ---- DPFP.Capture.EventHandler (the SDK's capture thread) ----
+        // ---- IReaderEvents (the reader's capture thread) ----
 
-        public void OnComplete(object Capture, string ReaderSerialNumber, DPFP.Sample Sample)
+        public void OnScan(FingerScan scan)
         {
             if (!capturing || busy) return;
             busy = true;
@@ -617,7 +631,7 @@ namespace DollarCoAttendance
             {
                 attempts++;
                 string error;
-                DPFP.FeatureSet features = FingerprintEnroller.ExtractEnrollmentFeatures(Sample.Bytes, out error);
+                object features = engine.EnrollPart(scan, out error);
                 if (features == null)
                 {
                     ShowStatus((error ?? "Could not read that scan.") + Environment.NewLine
@@ -626,7 +640,7 @@ namespace DollarCoAttendance
                 }
                 acceptedScans.Add(features);
                 string checkError;
-                DPFP.FeatureSet check = FingerprintMatcher.ExtractVerificationFeatures(Sample.Bytes, out checkError);
+                object check = engine.Probe(scan, out checkError);
                 if (check != null) checkScans.Add(check);
                 UpdateProgress(acceptedScans.Count);
 
@@ -662,12 +676,24 @@ namespace DollarCoAttendance
             }
         }
 
-        public void OnFingerGone(object Capture, string ReaderSerialNumber) { }
-        public void OnFingerTouch(object Capture, string ReaderSerialNumber) { }
-        public void OnReaderConnect(object Capture, string ReaderSerialNumber) { }
-        public void OnSampleQuality(object Capture, string ReaderSerialNumber, DPFP.Capture.CaptureFeedback CaptureFeedback) { }
+        public void OnFingerGone() { }
+        public void OnFingerTouch() { }
+        public void OnReaderConnect() { }
 
-        public void OnReaderDisconnect(object Capture, string ReaderSerialNumber)
+        public void OnReaderProblem(string problem)
+        {
+            if (problem == null) return;
+            RunOnUi(delegate
+            {
+                if (!capturing) return;
+                capturing = false;
+                StopCapture();
+                SetBusyUi(false);
+                ShowStatus(problem, Theme.Danger);
+            });
+        }
+
+        public void OnReaderDisconnect()
         {
             RunOnUi(delegate
             {
@@ -684,7 +710,7 @@ namespace DollarCoAttendance
             StaffMember person = selected;
             string finger = selectedFinger;
 
-            EnrollmentResult fused = FingerprintEnroller.Fuse(acceptedScans);
+            EnrollmentResult fused = engine.Fuse(acceptedScans);
             if (!fused.Ready)
             {
                 ShowStatus((fused.Error ?? "Enrolment failed.") + Environment.NewLine + "Press Start to try again.", Theme.Danger);
@@ -717,6 +743,7 @@ namespace DollarCoAttendance
             }
 
             changedAny = true;
+            lock (enrolledIds) enrolledIds.Add(person.Id);
             Log.Info("Enrolled " + person.Id + " " + finger + " (by " + manager.Email + ")");
             var linked = new TemplateCandidate { EmployeeId = person.Id, Finger = finger, TemplateBase64 = template };
             RunOnUi(delegate
@@ -755,9 +782,9 @@ namespace DollarCoAttendance
             if (others.Count == 0) return null;
             if (checkScans.Count == 0) return "These scans could not be checked against the fingerprints on file. Press Start to try again.";
 
-            foreach (DPFP.FeatureSet scan in checkScans)
+            foreach (object scan in checkScans)
             {
-                MatchResult match = FingerprintMatcher.Identify(scan, others);
+                MatchResult match = engine.Identify(scan, others);
                 if (match.Ambiguous) return "This finger already matches more than one person on file. Use a different finger.";
                 if (!match.Matched) continue;
                 if (match.EmployeeId == person.Id)
