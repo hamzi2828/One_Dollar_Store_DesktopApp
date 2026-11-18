@@ -34,7 +34,7 @@ namespace DollarCoAttendance
     //
     // Everything that talks to the server runs off the UI thread, so a slow or
     // absent server never freezes the window.
-    public class MainForm : Form, DPFP.Capture.EventHandler
+    public class MainForm : Form, IReaderEvents
     {
         private const int ResultHoldMs = 8000;
         private const int ErrorHoldMs = 5000;
@@ -45,6 +45,7 @@ namespace DollarCoAttendance
         private const int ReplayRetryMs = 30000;
         private const int ReaderGraceMs = 4000;
         private const int TouchGoneMs = 1500;
+        private const int BreakArmSeconds = 15;
 
         [Flags]
         private enum LoadParts
@@ -69,16 +70,24 @@ namespace DollarCoAttendance
         private string boardDay;
 
         // ---- reader ----
-        private DPFP.Capture.Capture capturer;
+        private FingerReader capturer;
+        private ReaderBrand readerBrand = ReaderBrand.DigitalPersona;
+        private FingerEngine engine = DigitalPersonaEngine.Instance;
         private bool engineAvailable;
         private string engineError;
-        private string readerDriverError;
+        private volatile string readerDriverError;   // why the reader's driver cannot be used, or null
         private volatile bool readerConnected;
         private volatile bool readerChecked;
         private volatile bool touchPending;
 
         // ---- state ----
         private volatile bool busy;            // a scan is being processed
+        // Owner, 2026-11-04: registering a finger is not clocking in. People just
+        // enrolled are not punched for a while, and stray scans right after the
+        // Enroll window closes are dropped.
+        public const int JustEnrolledQuietSeconds = 120;
+        private readonly Dictionary<string, DateTime> justEnrolledUntilUtc = new Dictionary<string, DateTime>();
+        private DateTime scansQuietUntilUtc = DateTime.MinValue;
         private volatile bool showingDetail;   // a result is on the left panel
         private volatile bool sessionEnded;
         private volatile bool sessionConfirmed;
@@ -93,6 +102,12 @@ namespace DollarCoAttendance
         private int replaying;
         private bool skewNoted;
 
+        // ---- break ----
+        // The Break button arms the next matched scan as action=break, for
+        // BreakArmSeconds or until that scan (pressed again = cancel).
+        private volatile bool breakArmed;
+        private DateTime breakDeadlineUtc;
+
         // ---- UI ----
         private HeaderBand header;
         private Label clockLabel;
@@ -106,13 +121,17 @@ namespace DollarCoAttendance
         private RoundButton enrollButton;
         private RoundButton salesButton;
         private bool salesShown = true;   // features.sales (Control.Visible reads false until the form shows)
+        private bool enrollShown = true;  // features.enroll
+        private bool settingsShown = true; // features.settings
+        private bool salesOpening;        // a sign-in code is being fetched for the POS screen
         private RoundButton refreshButton;
         private RoundButton settingsButton;
+        private RoundButton pcNameButton;   // everyone signed in: renames this PC
         private RoundButton signOutButton;
 
         // WinForms timers (System.Threading has its own Timer).
         private System.Windows.Forms.Timer detailTimer, boardTimer, templateTimer, clockTimer, connectionTimer,
-            replayTimer, sessionTimer, readerGraceTimer, touchTimer;
+            replayTimer, sessionTimer, readerGraceTimer, touchTimer, breakTimer;
 
         public event EventHandler<SessionEndedEventArgs> LoggedOut;
 
@@ -169,6 +188,7 @@ namespace DollarCoAttendance
             header.Controls.Add(connectionLabel);
 
             reader = new ReaderPanel();
+            reader.BreakClicked += Break_Click;
             boardPanel = new BoardPanel();
             blockedPanel = new BlockedPanel();
             blockedPanel.Visible = false;
@@ -186,7 +206,12 @@ namespace DollarCoAttendance
                 BeginLoad(LoadParts.All, "Refreshing...");
             };
             settingsButton = Theme.QuietButton("Settings", Theme.TextSecondary);
-            settingsButton.Click += delegate { SettingsForm.Edit(this, config); };
+            settingsButton.Click += delegate { if (settingsShown) SettingsForm.Edit(this, config); };
+            pcNameButton = Theme.QuietButton("PC name", Theme.TextSecondary);
+            pcNameButton.Click += delegate
+            {
+                if (PcNameForm.Edit(this, config)) ApplySession();
+            };
             signOutButton = Theme.QuietButton("Sign out", Theme.Danger);
             signOutButton.Click += SignOut_Click;
 
@@ -198,6 +223,7 @@ namespace DollarCoAttendance
             Controls.Add(salesButton);
             Controls.Add(refreshButton);
             Controls.Add(settingsButton);
+            Controls.Add(pcNameButton);
             Controls.Add(signOutButton);
 
             detailTimer = NewTimer(ResultHoldMs, delegate { detailTimer.Stop(); ReturnToWaiting(); });
@@ -222,6 +248,8 @@ namespace DollarCoAttendance
                 if (showingDetail) ReturnToWaiting();
                 else ShowReaderState();
             });
+
+            breakTimer = NewTimer(500, delegate { BreakTick(); });
 
             FormClosing += MainForm_FormClosing;
             ApplySession();
@@ -269,8 +297,12 @@ namespace DollarCoAttendance
             blockedPanel.SetBounds(margin, contentTop, w - margin * 2, contentHeight);
 
             int bw = P(210);
-            enrollButton.SetBounds(margin, buttonsTop, bw, buttonHeight);
-            int next = enrollButton.Right + P(12);
+            int next = margin;
+            if (enrollShown)
+            {
+                enrollButton.SetBounds(next, buttonsTop, bw, buttonHeight);
+                next = enrollButton.Right + P(12);
+            }
             if (salesShown)
             {
                 salesButton.SetBounds(next, buttonsTop, P(150), buttonHeight);
@@ -278,7 +310,13 @@ namespace DollarCoAttendance
             }
             refreshButton.SetBounds(next, buttonsTop, P(150), buttonHeight);
             signOutButton.SetBounds(w - margin - P(150), buttonsTop, P(150), buttonHeight);
-            settingsButton.SetBounds(signOutButton.Left - P(12) - P(150), buttonsTop, P(150), buttonHeight);
+            int right = signOutButton.Left;
+            if (settingsShown)
+            {
+                settingsButton.SetBounds(right - P(12) - P(150), buttonsTop, P(150), buttonHeight);
+                right = settingsButton.Left;
+            }
+            pcNameButton.SetBounds(right - P(12) - P(150), buttonsTop, P(150), buttonHeight);
             header.Invalidate();
         }
 
@@ -287,10 +325,16 @@ namespace DollarCoAttendance
             header.Subtitle = (session != null ? session.HeaderLine() : string.Empty) + "   ·   " + config.DeviceLabel;
             enrollButton.Enabled = !blocked;
             bool sales = session == null || session.SalesEnabled;
-            if (salesShown != sales)
+            bool enroll = session == null || session.EnrollEnabled;
+            bool settings = session == null || session.SettingsEnabled;
+            if (salesShown != sales || enrollShown != enroll || settingsShown != settings)
             {
                 salesShown = sales;
                 salesButton.Visible = sales;
+                enrollShown = enroll;
+                enrollButton.Visible = enroll;
+                settingsShown = settings;
+                settingsButton.Visible = settings;
                 Relayout();
             }
         }
@@ -319,7 +363,10 @@ namespace DollarCoAttendance
             boardDay = ShopTime.TodayKey;
             reader.ShowIdle(PulseState.Off, "Starting...", "Looking for the fingerprint reader.", Theme.TextSecondary);
 
-            engineError = FingerprintMatcher.SelfTest();
+            readerBrand = ReaderSetup.Choose(config);
+            engine = FingerEngine.For(readerBrand);
+            Log.Info("Fingerprint reader: " + ReaderSetup.Label(readerBrand) + (config.Reader != "auto" ? " (set in the settings file)" : string.Empty));
+            engineError = engine.SelfTest();
             engineAvailable = engineError == null;
             if (!engineAvailable)
             {
@@ -359,35 +406,19 @@ namespace DollarCoAttendance
 
         private void StartReader()
         {
-            bool low = config.ReaderLowPriority;
             try
             {
-                try
-                {
-                    OpenReader(low);
-                }
-                catch (Exception ex)
-                {
-                    if (!low) throw;
-                    Log.Error("The reader could not be opened with readerPriority \"low\"; opening it the usual way", ex);
-                    OpenReader(false);
-                }
+                capturer = FingerReader.Create(readerBrand, this, config.ReaderLowPriority, SecuGenEngine.VerifyQuality);
+                capturer.Start();
             }
             catch (Exception ex)
             {
-                // The DigitalPersona runtime (driver) is missing.
-                readerDriverError = ex.Message;
+                // The DigitalPersona runtime (driver) is missing. (SecuGen reports
+                // its driver problems through OnReaderProblem instead.)
+                readerDriverError = ReaderSetup.DriverMissingBody(readerBrand);
                 readerChecked = true;
                 Log.Error("The fingerprint reader software could not be opened", ex);
             }
-        }
-
-        private void OpenReader(bool low)
-        {
-            capturer = low ? new DPFP.Capture.Capture(DPFP.Capture.Priority.Low) : new DPFP.Capture.Capture();
-            capturer.EventHandler = this;
-            capturer.StartCapture();
-            if (low) Log.Info("Fingerprint reader opened with readerPriority \"low\"");
         }
 
         // ------------------------------------------------------------ the left panel at rest
@@ -401,14 +432,12 @@ namespace DollarCoAttendance
             if (!engineAvailable)
             {
                 blockTitle = "Fingerprint files missing";
-                blockBody = "Attendance can't be marked. Files the reader needs are missing next to the app ("
-                    + engineError + "). Run the " + AppInfo.Name + " installer again.";
+                blockBody = ReaderSetup.EngineMissingBody(readerBrand, engineError);
             }
             else if (readerDriverError != null)
             {
                 blockTitle = "Fingerprint reader software not installed";
-                blockBody = "Attendance can't be marked. Install the DigitalPersona One Touch for Windows runtime (64-bit), "
-                    + "restart the PC, then plug the reader in.";
+                blockBody = readerDriverError;
             }
             else if (!readerConnected && readerChecked)
             {
@@ -421,6 +450,11 @@ namespace DollarCoAttendance
             readerDot.DotColor = readerConnected ? Theme.Success : (readerChecked ? Theme.Danger : Theme.Neutral);
             readerLabel.Text = readerConnected ? "READER READY" : (readerChecked ? "READER NOT CONNECTED" : "LOOKING FOR READER...");
             readerLabel.ForeColor = readerConnected ? Theme.Success : (readerChecked ? Theme.Danger : Theme.TextSecondary);
+
+            bool breakReady = blockTitle == null && readerConnected && templates.Loaded && engine.UsableCount(templates.Current) > 0
+                && session != null && session.CanPunch && session.AttendanceEnabled;
+            reader.SetBreakAvailable(breakReady);
+            if (!breakReady && breakArmed) DisarmBreak();
 
             if (showingDetail) return;
             if (!readerConnected)
@@ -437,13 +471,68 @@ namespace DollarCoAttendance
                         delegate { forceFullTemplates = true; BeginLoad(LoadParts.Templates, null); });
                 return;
             }
-            if (templates.Current.Count == 0)
+            if (engine.UsableCount(templates.Current) == 0)
             {
-                reader.ShowIdle(PulseState.Off, "No fingerprints enrolled yet",
-                    "A manager enrolls staff with \"Enroll fingerprints\" below.", Theme.Warning);
+                if (templates.Current.Count > 0)
+                    reader.ShowIdle(PulseState.Off, "Enroll fingers again on this reader",
+                        "The fingers on file were scanned on a different make of reader. A manager re-scans each one with \"Enroll fingerprints\" below.", Theme.Warning);
+                else
+                    reader.ShowIdle(PulseState.Off, "No fingerprints enrolled yet",
+                        "A manager enrolls staff with \"Enroll fingerprints\" below.", Theme.Warning);
                 return;
             }
-            reader.ShowIdle(PulseState.Ready, "Place your finger on the reader", "to clock in or clock out", Theme.TextPrimary);
+            if (breakArmed)
+                reader.ShowIdle(PulseState.Ready, "Break: scan your finger", "to start your break, or to end it", Theme.Warning);
+            else
+                reader.ShowIdle(PulseState.Ready, "Place your finger on the reader", "to clock in or clock out", Theme.TextPrimary);
+        }
+
+        // ------------------------------------------------------------ break
+
+        // UI thread. Arms break mode, or cancels it.
+        private void Break_Click(object sender, EventArgs e)
+        {
+            if (sessionEnded || blocked) return;
+            if (breakArmed)
+            {
+                Log.Info("Break cancelled");
+                DisarmBreak();
+                if (!showingDetail) ShowReaderState();
+                return;
+            }
+            if (busy) return;
+            breakArmed = true;
+            breakDeadlineUtc = DateTime.UtcNow.AddSeconds(BreakArmSeconds);
+            reader.SetBreakArmed(true, BreakArmSeconds);
+            breakTimer.Start();
+            Sounds.Say("Break. Scan your finger.");
+            // A result still on show gives way: the next scan is the break.
+            detailTimer.Stop();
+            showingDetail = false;
+            ShowReaderState();
+        }
+
+        private void BreakTick()
+        {
+            if (!breakArmed) { breakTimer.Stop(); return; }
+            int left = (int)Math.Ceiling((breakDeadlineUtc - DateTime.UtcNow).TotalSeconds);
+            if (left > 0)
+            {
+                reader.SetBreakArmed(true, left);
+                return;
+            }
+            Log.Info("Break mode timed out");
+            DisarmBreak();
+            if (!showingDetail) ShowReaderState();
+        }
+
+        // Any thread.
+        private void DisarmBreak()
+        {
+            breakArmed = false;
+            if (InvokeRequired) { RunOnUi(DisarmBreak); return; }
+            breakTimer.Stop();
+            reader.SetBreakArmed(false, 0);
         }
 
         private void SetBlocked(string title, string body)
@@ -602,7 +691,7 @@ namespace DollarCoAttendance
         private string RefreshSession()
         {
             Dictionary<string, object> result = api.Get("api/desktop/session");
-            if (Json.IsRejection(result)) { HandleRejection(result); return null; }
+            if (Json.IsRejection(result)) { EndForRejection(result); return null; }
             if (!Json.Ok(result)) return Json.IsOutage(result) ? null : (Json.Message(result) ?? "Could not check the sign-in.");
             SessionUser refreshed = SessionUser.From(Json.Data(result));
             if (refreshed == null) return null;
@@ -714,7 +803,8 @@ namespace DollarCoAttendance
                     Name = q.EmployeeName ?? (m != null ? m.Name : "Someone"),
                     Designation = m != null ? m.Designation : string.Empty,
                     State = "queued",
-                    LocalNote = "saved on this PC at " + ShopTime.Clock(q.ScannedAtUtc + ShopTime.ServerOffset),
+                    LocalNote = (q.Action == PunchApi.BreakAction ? "break · " : string.Empty)
+                        + "saved on this PC at " + ShopTime.Clock(q.ScannedAtUtc + ShopTime.ServerOffset),
                 });
             }
             string today = ShopTime.TodayKey;
@@ -743,6 +833,7 @@ namespace DollarCoAttendance
 
         private void Enroll_Click(object sender, EventArgs e)
         {
+            if (!enrollShown) return;
             if (blocked)
             {
                 boardPanel.ShowNote("Plug the fingerprint reader in first.", Theme.Danger);
@@ -754,14 +845,19 @@ namespace DollarCoAttendance
                 return;
             }
             // Only one capture session can own the reader at a time.
-            try { if (capturer != null) capturer.StopCapture(); } catch { }
+            try { if (capturer != null) capturer.Stop(); } catch { }
             bool changed;
-            using (var form = new EnrollForm(api, session, directory, templates.Loaded ? templates.Current : null, config.DeviceLabel))
+            using (var form = new EnrollForm(api, session, directory, templates.Loaded ? templates.Current : null, config.DeviceLabel,
+                readerBrand, config.ReaderLowPriority))
             {
                 form.ShowDialog(this);
                 changed = form.ChangedAny;
+                DateTime until = DateTime.UtcNow.AddSeconds(JustEnrolledQuietSeconds);
+                lock (justEnrolledUntilUtc)
+                    foreach (string id in form.EnrolledIds) justEnrolledUntilUtc[id] = until;
+                scansQuietUntilUtc = DateTime.UtcNow.AddSeconds(3);
             }
-            try { if (capturer != null) capturer.StartCapture(); } catch (Exception ex) { Log.Error("Reader could not be restarted", ex); }
+            try { if (capturer != null) capturer.Start(); } catch (Exception ex) { Log.Error("Reader could not be restarted", ex); }
             if (changed)
             {
                 forceFullTemplates = true;
@@ -770,9 +866,45 @@ namespace DollarCoAttendance
             ShowReaderState();
         }
 
+        // Asks the server for a one-time sign-in code (POST /api/desktop/pos-link,
+        // a few seconds at most, on a pool thread) so the POS screen opens
+        // already signed in as this counter. Offline, refused or slow: the POS
+        // screen opens as before, with its own saved sign-in / offline copy.
         private void Sales_Click(object sender, EventArgs e)
         {
-            string problem = PosLauncher.Open(config.PosUrl);
+            if (salesOpening) return;
+            string posUrl = config.PosUrl;
+            if (!api.ServerReachable || string.IsNullOrEmpty(api.Token))
+            {
+                OpenPos(posUrl);
+                return;
+            }
+            salesOpening = true;
+            salesButton.Enabled = false;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string url = posUrl;
+                try
+                {
+                    string code = PosLauncher.FetchSignInCode(api);
+                    if (code != null) url = PosLauncher.SignInUrl(posUrl, code) ?? posUrl;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Sales: sign-in code not fetched", ex);
+                }
+                RunOnUi(delegate
+                {
+                    salesOpening = false;
+                    salesButton.Enabled = true;
+                    OpenPos(url);
+                });
+            });
+        }
+
+        private void OpenPos(string url)
+        {
+            string problem = PosLauncher.Open(url, config.PosUrl);
             if (problem != null) boardPanel.ShowNote(problem, Theme.Danger);
         }
 
@@ -792,22 +924,22 @@ namespace DollarCoAttendance
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             foreach (System.Windows.Forms.Timer t in new[] { detailTimer, boardTimer, templateTimer, clockTimer, connectionTimer,
-                replayTimer, sessionTimer, readerGraceTimer, touchTimer })
+                replayTimer, sessionTimer, readerGraceTimer, touchTimer, breakTimer })
                 t.Stop();
             api.ReachabilityChanged -= Api_ReachabilityChanged;
-            try { if (capturer != null) capturer.StopCapture(); } catch { }
+            try { if (capturer != null) capturer.Stop(); } catch { }
             Sounds.Shutdown();
             KeepAwake(false);
         }
 
-        // ------------------------------------------------------------ DPFP.Capture.EventHandler
+        // ------------------------------------------------------------ IReaderEvents
         //
-        // These fire on the SDK's own thread. Two rules for everything below:
+        // These fire on the reader's own thread. Two rules for everything below:
         // nothing may throw (an exception there ends the app), and nothing
         // waits on the UI thread (it may be waiting on this one inside
-        // StopCapture) -- the window is told what to show with BeginInvoke.
+        // Stop) -- the window is told what to show with BeginInvoke.
 
-        public void OnReaderConnect(object Capture, string ReaderSerialNumber)
+        public void OnReaderConnect()
         {
             if (!readerConnected) Log.Info("Fingerprint reader connected");
             readerConnected = true;
@@ -815,7 +947,14 @@ namespace DollarCoAttendance
             RunOnUi(delegate { readerGraceTimer.Stop(); ShowReaderState(); });
         }
 
-        public void OnReaderDisconnect(object Capture, string ReaderSerialNumber)
+        public void OnReaderProblem(string problem)
+        {
+            readerDriverError = problem;
+            readerChecked = true;
+            ShowReaderState();
+        }
+
+        public void OnReaderDisconnect()
         {
             if (readerConnected) Log.Info("Fingerprint reader disconnected");
             readerConnected = false;
@@ -824,21 +963,21 @@ namespace DollarCoAttendance
             ShowReaderState();
         }
 
-        public void OnFingerTouch(object Capture, string ReaderSerialNumber)
+        public void OnFingerTouch()
         {
             touchPending = true;
-            if (!readerConnected) OnReaderConnect(Capture, ReaderSerialNumber);
+            if (!readerConnected) OnReaderConnect();
             RunOnUi(delegate
             {
                 if (sessionEnded || blocked || busy) return;
                 touchTimer.Stop();
                 detailTimer.Stop();
                 showingDetail = true;
-                reader.ShowIdle(PulseState.Busy, "Reading...", "Hold still", Theme.Brand);
+                reader.ShowIdle(PulseState.Busy, "Reading...", breakArmed ? "Hold still · break" : "Hold still", breakArmed ? Theme.Warning : Theme.Brand);
             });
         }
 
-        public void OnFingerGone(object Capture, string ReaderSerialNumber)
+        public void OnFingerGone()
         {
             if (!touchPending) return;
             RunOnUi(delegate
@@ -849,32 +988,29 @@ namespace DollarCoAttendance
             });
         }
 
-        public void OnSampleQuality(object Capture, string ReaderSerialNumber, DPFP.Capture.CaptureFeedback CaptureFeedback)
-        {
-        }
-
-        public void OnComplete(object Capture, string ReaderSerialNumber, DPFP.Sample Sample)
+        public void OnScan(FingerScan scan)
         {
             touchPending = false;
-            if (!readerConnected) OnReaderConnect(Capture, ReaderSerialNumber);
+            if (!readerConnected) OnReaderConnect();
             if (sessionEnded) return;
+            if (DateTime.UtcNow < scansQuietUntilUtc) return; // finger still on the reader from enrolling
             if (busy)
             {
                 ShowMessage("One moment", "Still marking the last finger. Scan again.", Theme.Warning, ErrorHoldMs);
                 return;
             }
-            if (!templates.Loaded || templates.Current.Count == 0)
+            if (!templates.Loaded || engine.UsableCount(templates.Current) == 0)
             {
                 Sounds.PlayNotRecognised(null);
                 ShowMessage(templates.Loaded ? "No fingerprints enrolled yet" : "Fingerprints not loaded yet",
-                    templates.Loaded ? "A manager must enroll this finger first." : "Wait a moment and try again.", Theme.Warning, ErrorHoldMs);
+                    templates.Loaded ? "A manager must enroll this finger on this reader first." : "Wait a moment and try again.", Theme.Warning, ErrorHoldMs);
                 return;
             }
 
             busy = true;
             try
             {
-                ProcessScan(Sample);
+                ProcessScan(scan, breakArmed);
             }
             catch (Exception ex)
             {
@@ -890,13 +1026,26 @@ namespace DollarCoAttendance
 
         // ------------------------------------------------------------ match here, then tell the server who
 
-        private void ProcessScan(DPFP.Sample sample)
+        private bool JustEnrolled(string employeeId)
+        {
+            if (string.IsNullOrEmpty(employeeId)) return false;
+            lock (justEnrolledUntilUtc)
+            {
+                DateTime until;
+                if (!justEnrolledUntilUtc.TryGetValue(employeeId, out until)) return false;
+                if (DateTime.UtcNow < until) return true;
+                justEnrolledUntilUtc.Remove(employeeId);
+                return false;
+            }
+        }
+
+        private void ProcessScan(FingerScan scan, bool forBreak)
         {
             DateTime scannedUtc = DateTime.UtcNow; // this PC's clock; see SendQueued
             ShowMessage("Checking...", string.Empty, Theme.Brand, 0);
 
             string extractError;
-            DPFP.FeatureSet features = FingerprintMatcher.ExtractVerificationFeatures(sample.Bytes, out extractError);
+            object features = engine.Probe(scan, out extractError);
             if (features == null)
             {
                 Sounds.PlayNotRecognised(null);
@@ -904,7 +1053,7 @@ namespace DollarCoAttendance
                 return;
             }
 
-            MatchResult match = FingerprintMatcher.Identify(features, templates.Current);
+            MatchResult match = engine.Identify(features, templates.Current);
             if (!match.Matched)
             {
                 Sounds.PlayNotRecognised(match.Ambiguous ? "Please try again." : "Not recognised.");
@@ -916,6 +1065,18 @@ namespace DollarCoAttendance
             }
 
             // Recognised HERE: the name goes up at once, before the server answers.
+            // A matched scan uses up break mode.
+            if (JustEnrolled(match.EmployeeId))
+            {
+                StaffMember enrolled = directory.Find(match.EmployeeId);
+                Sounds.PlayNotRecognised(null);
+                ShowMessage("Fingerprint registered", (enrolled != null ? enrolled.Name + ": " : string.Empty)
+                    + "saved, not clocked in. Clock in with this finger after 2 minutes.", Theme.Brand, ErrorHoldMs);
+                return;
+            }
+
+            string action = forBreak ? PunchApi.BreakAction : null;
+            if (forBreak) DisarmBreak();
             StaffMember person = directory.Find(match.EmployeeId);
             string photo = person != null ? api.Resolve(person.PhotoUrl) : null;
             RunOnUi(delegate
@@ -923,29 +1084,30 @@ namespace DollarCoAttendance
                 if (sessionEnded) return;
                 detailTimer.Stop();
                 showingDetail = true;
-                reader.ShowPerson(person, "Recognised", "Marking attendance...", Theme.Brand, photo);
+                reader.ShowPerson(person, "Recognised", forBreak ? "Marking break..." : "Marking attendance...",
+                    forBreak ? Theme.Warning : Theme.Brand, photo);
             });
-            Punch(match.EmployeeId, person, scannedUtc);
+            Punch(match.EmployeeId, person, scannedUtc, action);
         }
 
-        private void Punch(string employeeId, StaffMember person, DateTime scannedUtc)
+        private void Punch(string employeeId, StaffMember person, DateTime scannedUtc, string action)
         {
             string clientId = PunchApi.NewClientId();
             // No connection, or older punches still waiting: this one goes in the
             // queue behind them, so the server gets them in the order they happened.
             if (!api.ServerReachable || OfflineStore.QueueCount > 0)
             {
-                SaveOffline(employeeId, person, clientId, scannedUtc);
+                SaveOffline(employeeId, person, clientId, scannedUtc, action);
                 return;
             }
 
-            Dictionary<string, object> result = PunchApi.SendLive(api, employeeId, clientId, config.DeviceLabel);
+            Dictionary<string, object> result = PunchApi.SendLive(api, employeeId, clientId, config.DeviceLabel, action);
 
             // No answer: it may or may not have been recorded. Saved, and sent
             // again under the SAME clientId, which the server records only once.
             if (Json.IsOutage(result))
             {
-                SaveOffline(employeeId, person, clientId, scannedUtc);
+                SaveOffline(employeeId, person, clientId, scannedUtc, action);
                 return;
             }
 
@@ -964,9 +1126,15 @@ namespace DollarCoAttendance
             if (punch == null)
             {
                 string message = Json.Message(result) ?? "The server did not record it.";
-                Log.Error("Punch for " + employeeId + " refused: " + message);
-                Sounds.PlayProblem("Not marked.");
-                ShowResult(name, person, photo, "NOT MARKED", null, null, Theme.Danger, message, ErrorHoldMs);
+                string code = Json.Code(result);
+                Log.Error("Punch for " + employeeId + (action != null ? " (" + action + ")" : string.Empty) + " refused: "
+                    + (code != null ? code + " " : string.Empty) + message);
+                // A break the server will not start (not clocked in yet, or
+                // already gone home): amber, with the server's own sentence.
+                bool breakRefused = action != null && (code == "NOT_CLOCKED_IN" || code == "ALREADY_OUT");
+                Sounds.PlayProblem(breakRefused ? "No break." : "Not marked.");
+                ShowResult(name, person, photo, breakRefused ? "NO BREAK" : "NOT MARKED", null, null,
+                    breakRefused ? Theme.Warning : Theme.Danger, message, ErrorHoldMs);
                 return;
             }
 
@@ -982,14 +1150,16 @@ namespace DollarCoAttendance
         {
             string first = person != null ? person.Name.Split(' ')[0] : (punch.Name ?? string.Empty).Split(' ')[0];
             string speech = punch.Speech(first);
-            if (punch.IsOut) Sounds.PlayOut(speech);
+            if (punch.IsBreakStart) Sounds.PlayOut(speech);
+            else if (punch.IsBreakEnd) Sounds.PlayIn(speech);
+            else if (punch.IsOut) Sounds.PlayOut(speech);
             else if (punch.IsLate) Sounds.PlayLate(speech);
             else Sounds.PlayIn(speech);
         }
 
         // ------------------------------------------------------------ offline
 
-        private void SaveOffline(string employeeId, StaffMember person, string clientId, DateTime scannedUtc)
+        private void SaveOffline(string employeeId, StaffMember person, string clientId, DateTime scannedUtc, string action)
         {
             bool added = OfflineStore.Enqueue(new QueuedPunch
             {
@@ -997,17 +1167,19 @@ namespace DollarCoAttendance
                 EmployeeId = employeeId,
                 EmployeeName = person != null ? person.Name : null,
                 ScannedAtUtc = scannedUtc,
+                Action = action,
             });
             int waiting = OfflineStore.QueueCount;
-            Log.Info("Punch " + employeeId + " saved offline (" + waiting + " waiting)");
+            bool forBreak = action == PunchApi.BreakAction;
+            Log.Info("Punch " + employeeId + (forBreak ? " (break)" : string.Empty) + " saved offline (" + waiting + " waiting)");
 
             string name = person != null ? person.Name : "Recognised";
             string first = name.Split(' ')[0];
-            if (added) Sounds.PlayIn(first + ", saved.");
-            ShowResult(name, person, person != null ? api.Resolve(person.PhotoUrl) : null, "SAVED",
+            if (added) Sounds.PlayIn(first + (forBreak ? ", break saved." : ", saved."));
+            ShowResult(name, person, person != null ? api.Resolve(person.PhotoUrl) : null, forBreak ? "BREAK SAVED" : "SAVED",
                 ShopTime.Clock(scannedUtc + ShopTime.ServerOffset), "on this PC — sent when online", Theme.Warning,
-                "No connection to the server right now. This punch is kept on this PC (" + waiting + " waiting) and "
-                + "sent automatically with its real time when the internet is back.", ResultHoldMs);
+                "No connection to the server right now. This " + (forBreak ? "break" : "punch") + " is kept on this PC (" + waiting
+                + " waiting) and sent automatically with its real time when the internet is back.", ResultHoldMs);
             UpdateOfflineNotice();
             ShowBoard();
             if (api.ServerReachable) StartReplay();
@@ -1074,7 +1246,8 @@ namespace DollarCoAttendance
             bool? outcome = PunchApi.QueuedOutcome(result);
             if (outcome == null) return null;
 
-            string who = punch.EmployeeId + " scanned " + ShopTime.ToIso(punch.ScannedAtUtc);
+            string who = punch.EmployeeId + (string.IsNullOrEmpty(punch.Action) ? string.Empty : " (" + punch.Action + ")")
+                + " scanned " + ShopTime.ToIso(punch.ScannedAtUtc);
             if (outcome == true)
             {
                 PunchResult answer = PunchResult.From(result);
@@ -1141,11 +1314,56 @@ namespace DollarCoAttendance
 
         // ------------------------------------------------------------ sign-in refused
 
+        // Staff list, board, fingerprints or a punch was refused (401 / 403).
+        // That alone does not sign the counter out: the session itself is asked
+        // (GET /api/desktop/session) and only its own refusal -- the token is
+        // really expired / revoked, the account disabled, the permission
+        // removed -- ends it. Session fine or no answer: keep working (renewing
+        // the token if it is due). Runs on a worker thread.
+        private int confirmingSession;
         private void HandleRejection(Dictionary<string, object> result)
+        {
+            if (sessionEnded) return;
+            if (Interlocked.CompareExchange(ref confirmingSession, 1, 0) != 0) return;
+            try
+            {
+                Log.Info("Request refused (HTTP " + Json.HttpStatus(result) + " " + (Json.Message(result) ?? string.Empty)
+                    + "); checking the sign-in before doing anything");
+                Dictionary<string, object> check = api.Get("api/desktop/session", 15000);
+                if (Json.IsRejection(check)) { EndForRejection(check); return; }
+                if (Json.Ok(check))
+                {
+                    SessionUser user = SessionUser.From(Json.Data(check));
+                    if (user != null && !user.CanRunDesk)
+                    {
+                        EndForRejection(new Dictionary<string, object> { { "http_status", 403 },
+                            { "message", "This account is no longer allowed to run the attendance app" } });
+                        return;
+                    }
+                    if (user != null)
+                    {
+                        session = user;
+                        OfflineStore.SaveSession(user);
+                        RunOnUi(ApplySession);
+                    }
+                    RenewTokenIfDue();
+                }
+                Log.Info("The sign-in is still valid; the counter stays signed in");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref confirmingSession, 0);
+            }
+        }
+
+        // The server refused the session itself: the only way, besides the
+        // Sign out button, that the counter goes back to the sign-in screen.
+        private void EndForRejection(Dictionary<string, object> result)
         {
             int status = Json.HttpStatus(result);
             string message = status == 401
-                ? "The counter's sign-in has expired. A manager needs to sign in again."
+                ? "The counter's sign-in has expired (it lasts 7 days and renews itself while the app runs and is online). "
+                    + "A manager needs to sign in again."
                 : "The server refused this account: " + (Json.Message(result) ?? "no permission") + ". Sign in with an account that has "
                     + "\"Desktop app → Attendance (fingerprint)\" permission.";
             Log.Info("Session ended by the server: HTTP " + status + " " + (Json.Message(result) ?? string.Empty));

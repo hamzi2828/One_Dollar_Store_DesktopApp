@@ -10,14 +10,18 @@ namespace DollarCoAttendance
         public const int LiveTimeoutMs = 12000;
         public const int QueuedTimeoutMs = 20000;
 
-        // A punch right now: the server uses its own clock.
+        public const string BreakAction = "break";
+
+        // A punch right now: the server uses its own clock. `action` "break":
+        // the Break button was pressed first (start a break, or end one).
         public static Dictionary<string, object> SendLive(ApiClient api, string employeeId, string clientId, string deviceName)
         {
-            var body = new Dictionary<string, object>();
-            body["employeeId"] = employeeId;
-            body["method"] = "fingerprint";
-            body["clientId"] = clientId;
-            body["deviceName"] = deviceName;
+            return SendLive(api, employeeId, clientId, deviceName, null);
+        }
+
+        public static Dictionary<string, object> SendLive(ApiClient api, string employeeId, string clientId, string deviceName, string action)
+        {
+            var body = LiveBody(employeeId, clientId, deviceName, action);
             return api.Post("api/desktop/punch", body, LiveTimeoutMs);
         }
 
@@ -27,15 +31,27 @@ namespace DollarCoAttendance
         // time. Punches older than 48 h are refused (a manager adds them).
         public static Dictionary<string, object> SendQueued(ApiClient api, QueuedPunch punch, string deviceName)
         {
+            return api.Post("api/desktop/punch", QueuedBody(punch, deviceName), QueuedTimeoutMs);
+        }
+
+        internal static Dictionary<string, object> LiveBody(string employeeId, string clientId, string deviceName, string action)
+        {
             var body = new Dictionary<string, object>();
-            body["employeeId"] = punch.EmployeeId;
+            body["employeeId"] = employeeId;
             body["method"] = "fingerprint";
-            body["clientId"] = punch.ClientId;
+            body["clientId"] = clientId;
             body["deviceName"] = deviceName;
+            if (!string.IsNullOrEmpty(action)) body["action"] = action;
+            return body;
+        }
+
+        internal static Dictionary<string, object> QueuedBody(QueuedPunch punch, string deviceName)
+        {
+            Dictionary<string, object> body = LiveBody(punch.EmployeeId, punch.ClientId, deviceName, punch.Action);
             body["offline"] = true;
             body["at"] = ShopTime.ToIso(punch.ScannedAtUtc);
             body["sentAt"] = ShopTime.ToIso(DateTime.UtcNow);
-            return api.Post("api/desktop/punch", body, QueuedTimeoutMs);
+            return body;
         }
 
         // What to do with a queued punch after a send: null = keep it and try

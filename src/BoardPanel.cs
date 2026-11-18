@@ -171,7 +171,7 @@ namespace DollarCoAttendance
         }
     }
 
-    // The counts across the top of the board: five tiles, each a number and a word.
+    // The counts across the top of the board: six tiles, each a number and a word.
     public class CountStrip : Control
     {
         private BoardCounts counts = new BoardCounts();
@@ -195,6 +195,7 @@ namespace DollarCoAttendance
             var tiles = new[]
             {
                 new KeyValuePair<string, KeyValuePair<int, Color>>("IN NOW", new KeyValuePair<int, Color>(counts.InNow, Theme.Success)),
+                new KeyValuePair<string, KeyValuePair<int, Color>>("ON BREAK", new KeyValuePair<int, Color>(counts.OnBreak, Theme.Warning)),
                 new KeyValuePair<string, KeyValuePair<int, Color>>("LATE", new KeyValuePair<int, Color>(counts.Late, Theme.Warning)),
                 new KeyValuePair<string, KeyValuePair<int, Color>>("NOT IN YET", new KeyValuePair<int, Color>(counts.NotInYet, Theme.TextPrimary)),
                 new KeyValuePair<string, KeyValuePair<int, Color>>("ABSENT", new KeyValuePair<int, Color>(counts.Absent, Theme.Danger)),

@@ -45,6 +45,8 @@ namespace DollarCoAttendance
         public static void PlayLate(string speech) { Play(late, speech, Voice.Interrupt()); }
         public static void PlayNotRecognised(string speech) { Play(notRecognised, speech, Voice.Interrupt()); }
         public static void PlayProblem(string speech) { Play(problem, speech, Voice.Interrupt()); }
+        // Words only, no chime (the Break button).
+        public static void Say(string speech) { Voice.Say(speech, Voice.Interrupt()); }
 
         private static MediaPlayer LoadCustom(string name)
         {

@@ -14,11 +14,16 @@ namespace DollarCoAttendance
         public DateTime ExpiresAtUtc;
         public DateTime SavedAtUtc;
 
-        // Renewed once it is a day old (MainForm), so a counter used every day
-        // never reaches the 7-day expiry.
+        // Renewed once it is a day old, or under 5 days from expiry (MainForm:
+        // at start-up and on every 30-minute session check), so a counter that
+        // is online at least once a week never reaches the 7-day expiry.
         public bool DueForRenewal
         {
-            get { return DateTime.UtcNow - SavedAtUtc > TimeSpan.FromHours(20); }
+            get
+            {
+                DateTime now = DateTime.UtcNow;
+                return now - SavedAtUtc > TimeSpan.FromHours(20) || ExpiresAtUtc - now < TimeSpan.FromDays(5);
+            }
         }
     }
 
@@ -102,7 +107,10 @@ namespace DollarCoAttendance
                     if (string.IsNullOrEmpty(stored.Token) || !expires.HasValue) return null;
                     stored.ExpiresAtUtc = expires.Value;
                     stored.SavedAtUtc = saved ?? DateTime.UtcNow.AddDays(-7);
-                    if (stored.ExpiresAtUtc <= DateTime.UtcNow) return null;
+                    // Past its expiry by THIS PC's clock is kept anyway: the
+                    // server decides (a wrong PC clock must not sign the
+                    // counter out), and offline the counter keeps working on
+                    // the saved session until the server can be asked.
                     return stored;
                 }
                 catch

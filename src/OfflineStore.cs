@@ -18,6 +18,9 @@ namespace DollarCoAttendance
         public string EmployeeId;
         public string EmployeeName;
         public DateTime ScannedAtUtc;
+        // "break" when the Break button was pressed before the scan; null for
+        // a plain punch (and for every punch saved by an older version).
+        public string Action;
     }
 
     // What the counter keeps on disk so it carries on when the internet drops:
@@ -214,6 +217,7 @@ namespace DollarCoAttendance
                     EmployeeId = Json.Str(row, "employeeId"),
                     EmployeeName = Json.Str(row, "employeeName"),
                     ScannedAtUtc = at ?? DateTime.UtcNow,
+                    Action = Json.Str(row, "action"),
                 };
                 if (punch.ClientId != null && punch.EmployeeId != null && at.HasValue) queue.Add(punch);
             }
@@ -247,6 +251,7 @@ namespace DollarCoAttendance
                 row["employeeId"] = p.EmployeeId;
                 row["employeeName"] = p.EmployeeName;
                 row["scannedAt"] = ShopTime.ToIso(p.ScannedAtUtc);
+                if (!string.IsNullOrEmpty(p.Action)) row["action"] = p.Action;
                 rows.Add(row);
             }
             var data = new Dictionary<string, object>();
@@ -310,5 +315,9 @@ namespace DollarCoAttendance
         // For the self-test only.
         internal static string CurrentQueuePath { get { return Path.Combine(Folder, QueueFile); } }
         internal static void ForgetQueueInMemory() { lock (gate) { queue = null; } }
+        internal static void WriteRawQueueForTest(string json)
+        {
+            Write(QueueFile, Serializer().Deserialize<Dictionary<string, object>>(json));
+        }
     }
 }

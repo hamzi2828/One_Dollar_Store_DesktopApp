@@ -14,8 +14,10 @@
 ;     users may change it (the app's Settings window writes it beside the exe);
 ;     an older settings file without "posUrl" (the Sales button, 1.1.0+) still
 ;     works: the app falls back to the live POS screen;
-;   * says plainly when the DigitalPersona reader software is missing (it is
-;     not bundled -- it is the reader maker's to distribute);
+;   * says plainly when the reader's driver is missing (DigitalPersona One
+;     Touch runtime, or SecuGen's driver -- not bundled, they are the reader
+;     makers' to distribute). SecuGen's SDK DLLs are bundled when the build
+;     had them (lib\secugen);
 ;   * uninstall keeps this PC's sign-in, offline copies and unsent punches
 ;     unless whoever uninstalls says otherwise.
 
@@ -32,6 +34,12 @@
 #define AppName "DollarCoPos"
 ; The version comes from the exe (src\AppInfo.cs; 1.1.0 = the Sales button, 1.2.0 = renamed DollarCoPos).
 #define AppVersion GetVersionNumbersString(BinDir + "\" + ExeName)
+; 1 when this build bundles SecuGen's SDK DLLs (lib\secugen at build time).
+#if FileExists(BinDir + "\sgfplib.dll")
+  #define SecuGenBundled "1"
+#else
+  #define SecuGenBundled "0"
+#endif
 
 [Setup]
 ; Never change the AppId: it is how an upgrade finds the copy already installed.
@@ -70,14 +78,10 @@ Name: "startup"; Description: "Start the app when Windows starts (recommended fo
 
 [Files]
 Source: "{#BinDir}\{#ExeName}"; DestDir: "{app}"; Flags: ignoreversion
-; The DigitalPersona SDK's .NET wrappers and matching engine, loaded from
-; beside the exe. The reader's driver itself is the One Touch runtime (below).
-Source: "{#BinDir}\DPFPDevNET.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\DPFPShrNET.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\DPFPEngNET.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\DPFPVerNET.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\dpHFtrEx.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BinDir}\dpHMatch.dll"; DestDir: "{app}"; Flags: ignoreversion
+; The reader SDKs, loaded from beside the exe: DigitalPersona's .NET wrappers
+; and matching engine, and (when the build had them) SecuGen's FDx SDK Pro
+; DLLs. The readers' drivers themselves are installed separately (below).
+Source: "{#BinDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\sounds\*"; DestDir: "{app}\sounds"; Flags: ignoreversion recursesubdirs
 ; Installed only when there is none yet (an upgrade keeps the PC's settings),
 ; never removed on its own, and writable by the PC's users.
@@ -109,11 +113,12 @@ Filename: "{app}\{#ExeName}"; Description: "Start {#AppName} now"; Flags: nowait
 var
   ReaderPage: TOutputMsgWizardPage;
 
-// The One Touch for Windows runtime puts DPFPApi.dll in System32; without it
-// the app shows "Fingerprint reader software not installed".
+// The One Touch for Windows runtime puts DPFPApi.dll in System32. A SecuGen
+// reader's driver cannot be checked from here: with SecuGen's DLLs bundled the
+// app itself says when that driver is missing, so the page is skipped.
 function ReaderSoftwareInstalled: Boolean;
 begin
-  Result := FileExists(ExpandConstant('{sys}\DPFPApi.dll'));
+  Result := FileExists(ExpandConstant('{sys}\DPFPApi.dll')) or ('{#SecuGenBundled}' = '1');
 end;
 
 procedure InitializeWizard;
@@ -121,10 +126,11 @@ begin
   ReaderPage := CreateOutputMsgPage(wpSelectTasks,
     'Fingerprint reader software not found',
     'Attendance cannot be marked until it is installed.',
-    'This PC does not have the DigitalPersona fingerprint reader software (its driver).' + #13#10 + #13#10 +
+    'This PC does not have the fingerprint reader software (its driver).' + #13#10 + #13#10 +
     'Staff clock in ONLY with their fingerprint, so the reader must work before the counter can be used. ' +
     'You can finish this setup now and install the reader software afterwards.' + #13#10 + #13#10 +
-    'What to install: "DigitalPersona One Touch for Windows" runtime (RTE), 64-bit. It is not the browser "Lite Client".' + #13#10 + #13#10 +
+    'SecuGen reader (e.g. Hamster Pro 20): install the "SecuGen Windows Driver Installer" from secugen.com/drivers.' + #13#10 + #13#10 +
+    'DigitalPersona reader: install the "DigitalPersona One Touch for Windows" runtime (RTE), 64-bit. It is not the browser "Lite Client".' + #13#10 + #13#10 +
     'Where to get it: the CD or USB stick that came with the reader, the shop that sold the reader, ' +
     'or HID Global''s driver downloads (www.hidglobal.com/drivers - search for "DigitalPersona One Touch").' + #13#10 + #13#10 +
     'Install it, restart the PC if it asks, then plug the reader into a USB port on the PC itself (not a hub).');

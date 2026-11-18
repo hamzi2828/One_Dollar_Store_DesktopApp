@@ -55,6 +55,7 @@ namespace DollarCoAttendance
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
                     Application.Run(new AppController());
+                    LabelPrintService.Stop();
                     Log.Info("Exited");
                 }
                 finally
@@ -103,7 +104,12 @@ namespace DollarCoAttendance
             if (config.LoadError != null) Log.Error("Config: " + config.LoadError.Replace(Environment.NewLine, " "));
             Log.Info("Server " + config.ApiBaseUrl + ", this PC is \"" + config.DeviceLabel + "\"");
 
+            // Sticker printing for the web admin (http://127.0.0.1:47321/): runs
+            // whatever window is open, even before anyone signs in.
+            LabelPrintService.Start(config.LabelPrinter);
+
             api = new ApiClient(config.ApiBaseUrl);
+            ApiClient.DeviceName = config.DeviceLabel;
             TokenStore.UseScope(config.ApiBaseUrl);
             OfflineStore.UseScope(config.ApiBaseUrl);
 

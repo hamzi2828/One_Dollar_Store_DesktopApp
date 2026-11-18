@@ -62,6 +62,7 @@ if not exist "%OUTDIR%" mkdir "%OUTDIR%"
     /reference:"%HERE%lib\DPFPEngNET.dll" ^
     /reference:"%HERE%lib\DPFPVerNET.dll" ^
     /reference:System.Core.dll ^
+    /reference:System.Management.dll ^
     /reference:System.Security.dll ^
     /reference:System.Windows.Forms.dll ^
     /reference:System.Drawing.dll ^
@@ -79,6 +80,14 @@ if errorlevel 1 (
 REM The app loads these at run time, so they sit beside the exe.
 for %%F in (DPFPDevNET.dll DPFPShrNET.dll DPFPEngNET.dll DPFPVerNET.dll dpHFtrEx.dll dpHMatch.dll) do (
     copy /y "%HERE%lib\%%F" "%OUTDIR%\" >nul
+)
+REM SecuGen readers (Hamster Pro 20 ...): the 64-bit DLLs of SecuGen's free
+REM "FDx SDK Pro for Windows" (its bin\x64 folder), put in lib\secugen by hand.
+if exist "%HERE%lib\secugen\sgfplib.dll" (
+    copy /y "%HERE%lib\secugen\*.dll" "%OUTDIR%\" >nul
+) else (
+    echo NOTE: lib\secugen\sgfplib.dll not found -- this build works with DigitalPersona readers only.
+    echo       For a SecuGen reader put the FDx SDK Pro bin\x64 DLLs in "%HERE%lib\secugen" and build again.
 )
 if not exist "%OUTDIR%\desktopApp.config.json" copy /y "%CONFIG%" "%OUTDIR%\desktopApp.config.json" >nul
 if not exist "%OUTDIR%\sounds" mkdir "%OUTDIR%\sounds"

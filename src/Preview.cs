@@ -47,6 +47,19 @@ namespace DollarCoAttendance
                     "Clocked out 6:05 pm — worked 7 h 35 m");
                 Snap(main, folder, "5-counter-out.png");
 
+                main.PreviewReader.SetBreakAvailable(true);
+                main.PreviewReader.SetBreakArmed(true, 12);
+                main.PreviewReader.ShowIdle(PulseState.Ready, "Break: scan your finger", "to start your break, or to end it", Theme.Warning);
+                Snap(main, folder, "5a-counter-break-armed.png");
+                main.PreviewReader.SetBreakArmed(false, 0);
+                main.PreviewReader.ShowResult("Ali Khan", "Cashier", null, "ON BREAK", "2:10 pm", "scan again when you are back", Theme.Warning,
+                    "Break started 2:10 pm — scan again when you are back");
+                Snap(main, folder, "5b-counter-break-start.png");
+                main.PreviewReader.ShowResult("Ali Khan", "Cashier", null, "BACK", "2:35 pm", "back from break · 25 min break today", Theme.Warning,
+                    "Back from break 2:35 pm — 25 min break");
+                Snap(main, folder, "5c-counter-break-end.png");
+                main.PreviewReader.ShowIdle(PulseState.Ready, "Place your finger on the reader", "to clock in or clock out", Theme.TextPrimary);
+
                 main.PreviewState(board, true, true, null, null);
                 main.PreviewReader.ShowIdle(PulseState.Ready, "Place your finger on the reader", "to clock in or clock out", Theme.TextPrimary);
                 Snap(main, folder, "6-counter-offline.png");
@@ -76,7 +89,7 @@ namespace DollarCoAttendance
                 }
                 people.Add(m);
             }
-            using (var enrol = new EnrollForm(api, user, new StaffDirectory(people), TemplateSet.Empty, "Counter PC"))
+            using (var enrol = new EnrollForm(api, user, new StaffDirectory(people), TemplateSet.Empty, "Counter PC", ReaderBrand.DigitalPersona, false))
             {
                 Open(enrol);
                 Snap(enrol, folder, "8-enrol-sign-in.png");
@@ -111,10 +124,12 @@ namespace DollarCoAttendance
 
         private static BoardData SampleBoard()
         {
-            string json = "{\"data\":{\"date\":\"2026-10-19\",\"isToday\":true,\"counts\":{\"inNow\":3,\"late\":1,\"notInYet\":1,\"absent\":1,\"onLeave\":1,\"out\":1},\"rows\":["
+            string json = "{\"data\":{\"date\":\"2026-10-19\",\"isToday\":true,\"counts\":{\"inNow\":3,\"late\":1,\"notInYet\":1,\"absent\":1,\"onLeave\":1,\"out\":1,\"onBreak\":1},\"rows\":["
                 + Row("Ali Khan", "Cashier", "in", "2026-10-19T05:12:00Z", null, 12)
                 + "," + Row("Bilal Ahmed", "Cashier", "in", "2026-10-19T04:55:00Z", null, 0)
                 + "," + Row("Usman Tariq", "Manager", "in", "2026-10-19T04:40:00Z", null, 0)
+                + ",{\"employeeId\":\"br\",\"name\":\"Faisal Raza\",\"designation\":\"Cashier\",\"shift\":{\"type\":\"shift\",\"name\":\"Morning\",\"start\":\"2026-10-19T05:00:00Z\",\"end\":\"2026-10-19T13:00:00Z\"},"
+                + "\"checkIn\":\"2026-10-19T04:57:00Z\",\"state\":\"break\",\"breakStartedAt\":\"2026-10-19T09:10:00Z\",\"status\":\"present\",\"lateMinutes\":0}"
                 + "," + Row("Hina Noor", "Floor staff", "not_in", null, null, 0)
                 + "," + Row("Sana Bibi", "Floor staff", "out", "2026-10-19T04:58:00Z", "2026-10-19T13:05:00Z", 0)
                 + "," + Row("Kashif Ali", "Store keeper", "absent", null, null, 0)

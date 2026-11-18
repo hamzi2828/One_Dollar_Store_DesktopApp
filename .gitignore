@@ -15,3 +15,5 @@ tools/*.exe
 # lib\ and sounds\ before building (see README, "Files not in git").
 lib/*.dll
 sounds/*.mp3
+# SecuGen FDx SDK Pro DLLs (licence, like the DigitalPersona ones).
+lib/secugen/*.dll

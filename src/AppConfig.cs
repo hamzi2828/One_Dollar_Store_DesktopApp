@@ -12,9 +12,9 @@ namespace DollarCoAttendance
     // text editor; a hand edit works too.
     //
     //   {
-    //     "apiBaseUrl": "https://pos-one-dollar-store-backend.vercel.app/",
+    //     "apiBaseUrl": "https://api.dollarandco.org/",
     //     "deviceName": "Counter PC",
-    //     "posUrl": "https://pos-one-dollar-store-frontend.vercel.app/admin/pos",
+    //     "posUrl": "https://pos.dollarandco.org/admin/pos",
     //     "sound": true,
     //     "voice": true
     //   }
@@ -24,14 +24,33 @@ namespace DollarCoAttendance
     //
     // "readerPriority": "low" may be added by hand (see the README): it asks
     // the reader driver for events even while another window is in front.
+    //
+    // "reader": "secugen" or "digitalpersona" may be added by hand to pick the
+    // reader make; without it ("auto") the app finds the one plugged in.
+    //
+    // "labelPrinter": the sticker printer for LabelPrintService (Settings sets it;
+    // empty = automatic).
     public class AppConfig
     {
         // The live POS server (the shipped default, and the fallback when the
         // file cannot be read).
-        public const string LiveServer = "https://pos-one-dollar-store-backend.vercel.app/";
+        public const string LiveServer = "https://api.dollarandco.org/";
 
         // The POS screen the Sales button opens (the website, in an Edge app window).
-        public const string LivePosUrl = "https://pos-one-dollar-store-frontend.vercel.app/admin/pos";
+        public const string LivePosUrl = "https://pos.dollarandco.org/admin/pos";
+
+        // The shop moved off Vercel (2026-11). A PC upgraded in place keeps its old
+        // settings file, so its old Vercel addresses are swapped for the new ones here.
+        const string OldVercelServer = "https://pos-one-dollar-store-backend.vercel.app/";
+        const string OldVercelPos = "https://pos-one-dollar-store-frontend.vercel.app/";
+        static string MovedServer(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return url;
+            string u = url.Trim();
+            if (NormalizeBaseUrl(u).Equals(OldVercelServer, StringComparison.OrdinalIgnoreCase)) return LiveServer;
+            if (u.StartsWith(OldVercelPos, StringComparison.OrdinalIgnoreCase)) return "https://pos.dollarandco.org/" + u.Substring(OldVercelPos.Length);
+            return url;
+        }
 
         public string ApiBaseUrl;
         public string PosUrl = LivePosUrl;
@@ -39,6 +58,11 @@ namespace DollarCoAttendance
         public bool SoundOn = true;
         public bool VoiceOn = true;
         public bool ReaderLowPriority;
+        public string Reader = "auto";   // auto | secugen | digitalpersona
+
+        // The sticker printer LabelPrintService sends to; null / empty = the first
+        // installed printer whose name looks like one (Xprinter, XP-, Label).
+        public string LabelPrinter;
 
         // Where the config was looked for, for messages that name the file.
         public string ConfigPath;
@@ -116,6 +140,19 @@ namespace DollarCoAttendance
             return null;
         }
 
+        // Why `url` may not be opened in the POS window configured for `posUrl`,
+        // or null when it is on the same site (scheme, host and port), e.g.
+        // the website's /desktop-signin page that signs the counter in.
+        public static string SameSiteProblem(string url, string posUrl)
+        {
+            Uri a, b;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out a) || !Uri.TryCreate(posUrl, UriKind.Absolute, out b))
+                return "The POS screen address is not valid.";
+            bool same = string.Equals(a.Scheme, b.Scheme, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase) && a.Port == b.Port;
+            return same ? null : "Only pages of the POS website open in the POS window.";
+        }
+
         public static string NormalizeBaseUrl(string url)
         {
             string value = (url ?? string.Empty).Trim();
@@ -134,7 +171,7 @@ namespace DollarCoAttendance
 
         // Writes the settings, keeping any other keys already in the file.
         // Returns null on success, otherwise why it could not be written.
-        public static string Save(string apiBaseUrl, string deviceName, string posUrl, bool soundOn, bool voiceOn)
+        public static string Save(string apiBaseUrl, string deviceName, string posUrl, bool soundOn, bool voiceOn, string labelPrinter)
         {
             string path = FilePath;
             try
@@ -152,6 +189,7 @@ namespace DollarCoAttendance
                 data["posUrl"] = posUrl ?? LivePosUrl;
                 data["sound"] = soundOn;
                 data["voice"] = voiceOn;
+                data["labelPrinter"] = labelPrinter ?? string.Empty;
 
                 // One key per line, like the shipped file, so it stays easy to edit.
                 var json = new StringBuilder();
@@ -202,17 +240,21 @@ namespace DollarCoAttendance
                 if (data == null) throw new FormatException("the file does not contain a JSON object");
 
                 string url = Text(data, "apiBaseUrl");
-                if (!string.IsNullOrEmpty(url)) config.ApiBaseUrl = url;
+                if (!string.IsNullOrEmpty(url)) config.ApiBaseUrl = MovedServer(url);
                 string device = Text(data, "deviceName");
                 if (!string.IsNullOrEmpty(device)) config.DeviceName = device;
                 // Older configs have no posUrl, and a bad one must not stop the
                 // Sales button: both fall back to the live POS screen.
-                string pos = Text(data, "posUrl");
+                string pos = MovedServer(Text(data, "posUrl"));
                 if (!string.IsNullOrEmpty(pos) && PosUrlProblem(pos) == null) config.PosUrl = pos;
                 else if (!string.IsNullOrEmpty(pos)) Log.Info("posUrl in the settings is not usable, using " + LivePosUrl + ": " + pos);
                 config.SoundOn = Flag(data, "sound", true);
                 config.VoiceOn = Flag(data, "voice", true);
                 config.ReaderLowPriority = string.Equals(Text(data, "readerPriority"), "low", StringComparison.OrdinalIgnoreCase);
+                string make = (Text(data, "reader") ?? string.Empty).ToLowerInvariant().Replace(" ", string.Empty);
+                config.Reader = make == "secugen" || make == "digitalpersona" ? make : "auto";
+                string labelPrinter = Text(data, "labelPrinter");
+                config.LabelPrinter = string.IsNullOrEmpty(labelPrinter) ? null : labelPrinter;
             }
             catch (Exception ex)
             {

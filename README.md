@@ -28,18 +28,26 @@ sends the sales to the server by itself when it comes back (see *Sales*).
 |---|---|
 | Windows | Windows 10 or 11, **64-bit** |
 | .NET Framework 4.x | Already part of Windows 10 and 11 — nothing to install |
-| Fingerprint reader | **Required.** A DigitalPersona USB reader (U.are.U 4000/4500 family) **plus** its software: *DigitalPersona One Touch for Windows runtime (64-bit)*. Without the reader, attendance cannot be marked. |
+| Fingerprint reader | **Required.** One of: a **SecuGen** USB reader (Hamster Pro 20 / HU20, U20 family) **plus** SecuGen's driver (*SecuGen Windows Driver Installer*, secugen.com/drivers); **or** a DigitalPersona USB reader (U.are.U 4000/4500 family) **plus** *DigitalPersona One Touch for Windows runtime (64-bit)*. The app finds which one is plugged in. Without the reader, attendance cannot be marked. |
 | Internet | Needed for the first sign-in and for enrolling fingers. After that the counter keeps working when the internet drops (see *No internet*). |
 | A manager / admin account | The POS email and password of an account whose role has **Desktop app → Attendance (fingerprint)** (View + Create). See step 4. |
 | Microsoft Edge | For the **Sales** button. Already part of Windows 10 and 11 (Chrome or any browser works too). |
 
 ## 2. Install (once)
 
-1. **Install the reader software.** Run the *DigitalPersona One Touch for
-   Windows* runtime installer (from the CD/USB stick that came with the reader,
-   the shop that sold it, or HID Global's driver downloads at
-   www.hidglobal.com/drivers). Restart the PC if it asks. Plug the reader into a
-   USB port **on the PC itself**, not a hub.
+1. **Install the reader software.**
+   * **SecuGen (Hamster Pro 20):** from **secugen.com/drivers** download and run
+     the *SecuGen Windows Driver Installer* (or the smaller *U20 Windows
+     Driver*). **Not** the *WBF* driver: that one is for Windows Hello, and
+     this app cannot use the reader through it. Then unplug the reader and plug it back
+     in. In Device Manager it should no longer show a yellow warning.
+   * **DigitalPersona:** run the *DigitalPersona One Touch for Windows*
+     runtime installer (from the CD/USB stick that came with the reader, the
+     shop that sold it, or HID Global's driver downloads at
+     www.hidglobal.com/drivers).
+
+   Restart the PC if it asks. Plug the reader into a USB port **on the PC
+   itself**, not a hub.
 2. **Install the app.** Run **`DollarCoPos-Setup.exe`** and click
    through. It installs to *Program Files\DollarCo Attendance*, puts a shortcut
    on the desktop and in the Start menu, and (ticked) starts the app with
@@ -157,16 +165,46 @@ marked**. Plug it back in; the message goes away by itself. Missed punches →
 
 Press **Sales** (bottom, green) to open the POS selling screen. It opens in its
 own Microsoft Edge window (no tabs, no address bar, full screen) with its own
-saved sign-in, separate from anyone's normal browsing. Sign in to it once with a
-cashier's or manager's POS account; it stays signed in.
+saved sign-in, separate from anyone's normal browsing. Since 1.5.0 it signs
+itself in as the counter's account (a one-time code from the server, asked for
+in at most ~4 seconds); if that fails it opens as before, on its own saved
+sign-in.
 
 * Pressing **Sales** again just brings that window to the front.
-* It opens even with **no internet**: the app does not check anything first.
+* It opens even with **no internet**: without an answer from the server it
+  opens straight away.
   The selling screen then works from its offline copy and keeps the sales on
   this PC until the internet is back (see the POS screen's *Offline* badge).
 * No Edge on the PC? It uses Chrome, or else the normal web browser.
 * The button is hidden when the signed-in counter account's role does not have
-  **Desktop app → Sales on the counter PC**.
+  **Desktop app → Sales on the counter PC**. In the same way the website's
+  Roles page decides whether **Settings** and **Enroll fingerprints** are shown
+  (1.5.0). **PC name** is always there, so anyone signed in can name the PC.
+* The counter stays signed in until someone presses **Sign out**: the sign-in
+  renews itself while the app runs online. It asks for a new sign-in only if
+  the server refuses the account (disabled, permission removed) or the PC was
+  off / offline for more than 7 days.
+
+### Sticker printing (label printer)
+
+The website's sticker printing goes straight to the label printer (Xprinter
+XP-246B, 2 inch / 48 mm, driver "Xprinter XP-D281B" on USB001) instead of
+Chrome's print dialog, which gets the paper size wrong. While DollarCoPos is
+open (even on the sign-in window) it runs a small local service on
+`http://127.0.0.1:47321/` (this PC only; no admin rights needed):
+
+* `GET /status` → `{ ok, app, version, printer, printers }`: the label printer
+  it would use (or `null`) and every installed printer.
+* `POST /print` with `{ "data": "<TSPL>", "printer": "<optional>" }` → the TSPL
+  text (made by the server) is sent RAW to the printer: `{ ok, printer, bytes }`,
+  or `{ ok: false, error }` with HTTP 500.
+* Browsers may call it only from the POS website (and `localhost:3000` / `3001`
+  for development); it answers Chrome's Private Network Access preflight.
+
+**Which printer:** the one the request names (if installed), else **Settings →
+Label printer**, else (*automatic*) the first installed printer whose name
+contains *Xprinter*, *XP-* or *Label*. No match → "No label printer found.
+Install the Xprinter driver." Problems are written to the log.
 
 ## 5. No internet
 
@@ -193,8 +231,10 @@ and works offline. The very first sign-in on a PC needs the internet.
 | Problem | What to do |
 |---|---|
 | Red screen *Fingerprint reader not connected* | Check the USB cable; use a port on the PC itself. See install step 3 for the power setting. |
-| Red screen *Fingerprint reader software not installed* | Install the DigitalPersona One Touch for Windows runtime (64-bit), restart. |
-| Red screen *Fingerprint files missing* | Run the installer again. |
+| Red screen *Fingerprint reader software not installed* | SecuGen: install the SecuGen Windows driver (step 1), then unplug and replug the reader. DigitalPersona: install the One Touch for Windows runtime (64-bit), restart. |
+| Red screen *Fingerprint files missing* | Run the installer again. For SecuGen the installer must have been built with the SecuGen SDK DLLs (see *Files not in git*). |
+| *Enroll fingers again on this reader* | The fingers on file were scanned on the other make of reader (SecuGen and DigitalPersona templates do not mix). A manager re-scans each finger with *Enroll fingerprints* (*Replace*). |
+| The wrong reader make is picked (both kinds on one PC) | Add `"reader": "secugen",` (or `"digitalpersona"`) to `desktopApp.config.json`, then restart the app. |
 | *Not recognised* for one person, again and again | Clean the reader glass. Enroll that finger again (*Replace*), or enroll the other hand. |
 | *No fingerprints enrolled yet* | A manager enrolls staff (section 3). |
 | Touching the reader does nothing while another program is in front | Close the app, open `desktopApp.config.json` (in the app folder) in Notepad as administrator, add `"readerPriority": "low",` on its own line, save, start the app. |
@@ -209,7 +249,7 @@ and works offline. The very first sign-in on a PC needs the internet.
 ## 7. Privacy and security
 
 * Fingerprints are matched **on the counter PC**. The server stores each
-  finger's DigitalPersona template (not a picture of the finger) and never sees
+  finger's template (DigitalPersona or SecuGen; not a picture of the finger) and never sees
   a scan. Removing a finger deletes its template.
 * The counter keeps its copies (sign-in, fingerprints, staff list, waiting
   punches) in `%LOCALAPPDATA%\DollarCoAttendance\`, **encrypted with Windows
@@ -234,8 +274,10 @@ build.cmd /installer    -> ...and installer\Output\DollarCoPos-Setup.exe  (Inno 
 ```
 
 `lib\` holds the DigitalPersona One Touch SDK .NET wrappers and engine
-(`DPFP*.dll`, `dpHFtrEx.dll`, `dpHMatch.dll`), copied beside the exe by the
-build. A config already in the output folder is kept (it is that PC's own
+(`DPFP*.dll`, `dpHFtrEx.dll`, `dpHMatch.dll`), and `lib\secugen\` the SecuGen
+FDx SDK Pro DLLs (`sgfplib.dll` and the rest of its `bin\x64` folder), all copied
+beside the exe by the build. Without `lib\secugen\sgfplib.dll` the build still
+works, for DigitalPersona readers only. A config already in the output folder is kept (it is that PC's own
 settings). Bump `AppInfo.Version` in `src\AppInfo.cs` for every build handed to
 the shop. `app.ico`, `assets\logo.png` (the full *DOLLAR & Co* on its own dark rounded
 plate, so the white *Co* shows on any background), `assets\icon-1024.png`
@@ -244,7 +286,7 @@ plate, so the white *Co* shows on any background), `assets\icon-1024.png`
 
 **Config** (`desktopApp.config.json` beside the exe; the Settings window edits it):
 `apiBaseUrl` (POS server), `deviceName`, `posUrl` (the page the Sales button
-opens), `sound`, `voice`. A missing key takes its default, so a config from an
+opens), `sound`, `voice`, `labelPrinter` (empty = automatic). A missing key takes its default, so a config from an
 older version still works (no `posUrl` → the live POS screen).
 
 **Checks without a window or a reader:**
@@ -295,13 +337,16 @@ src/
   TemplateStore.cs      fingerprint list: full + incremental sync, offline copy
   PunchApi.cs           live / queued punch requests
   Models.cs             session, staff, punch result, board rows
+  FingerReader.cs       reader make detection, capture + matching interfaces, DigitalPersona adapter
+  SecuGen.cs            SecuGen FDx SDK Pro (sgfplib.dll): capture thread, templates, 1:N matching
   FingerprintMatcher.cs local 1:N matching (DigitalPersona engine)
-  FingerprintEnroller.cs four scans -> one template
+  FingerprintEnroller.cs four scans -> one template (DigitalPersona)
   MainForm.cs           the counter: reader, punches, offline, refresh timers
   ReaderPanel.cs        left: pulse, name + photo, IN / OUT result card
   BoardPanel.cs         right: counts + today's staff
   BlockedPanel.cs       full-screen "reader not connected"
   EnrollForm.cs         manager sign-in, pick employee + finger, 4 scans, upload / remove
+  LabelPrintService.cs  http://127.0.0.1:47321/ status + RAW TSPL to the label printer (winspool)
   LoginForm.cs  SettingsForm.cs
   Theme.cs  Controls.cs  ReadyPulse.cs  Avatar.cs   black / yellow brand, owner-drawn controls
   Sounds.cs  Voice.cs   chimes, tones, spoken result
@@ -317,5 +362,9 @@ them back before running `build.cmd`:
 - `lib\` - the DigitalPersona U.are.U SDK DLLs: `DPFPDevNET.dll`, `DPFPShrNET.dll`,
   `DPFPEngNET.dll`, `DPFPVerNET.dll`, `dpHFtrEx.dll`, `dpHMatch.dll` (from the
   DigitalPersona SDK / reader driver package).
+- `lib\secugen\` - for SecuGen readers: every DLL in the `bin\x64` folder of
+  SecuGen's free **FDx SDK Pro for Windows** (request it at
+  secugen.com/request-free-software; the download link comes by email).
+  `sgfplib.dll` must be the 64-bit one.
 - `sounds\` - `clock-in.mp3` and `clock-out.mp3` (any short chimes; without them
   the app still works, just with no chime - the spoken result still plays).

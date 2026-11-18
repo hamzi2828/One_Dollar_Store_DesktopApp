@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using Microsoft.Win32;
@@ -12,8 +13,11 @@ namespace DollarCoAttendance
     // and its offline copy (the website's service worker + IndexedDB) apart
     // from anyone's everyday browsing.
     //
-    // No server call happens first: with the internet down the POS screen
-    // still opens from its offline copy. Clicking again while it is open just
+    // First a quick POST /api/desktop/pos-link (FetchSignInCode, ~4 s at most)
+    // for a one-time code, so the POS screen opens at /desktop-signin#code=...
+    // and signs in as this counter. Any failure (offline, 403, timeout): the
+    // configured posUrl opens as before -- with the internet down the POS screen
+    // still opens from its offline copy. The code is never written to the log. Clicking again while it is open just
     // starts Edge again with the same profile, and Edge brings the window
     // forward. No Edge: Chrome with the same switches. Neither: the default
     // browser (an ordinary tab).
@@ -28,11 +32,44 @@ namespace DollarCoAttendance
             }
         }
 
-        // Returns null when a browser was started, otherwise why not (for the screen).
-        public static string Open(string url)
+        public const int SignInCodeTimeoutMs = 4000;
+
+        // A one-time sign-in code for the POS website, or null when the server
+        // could not give one. Runs the HTTP call: never on the UI thread.
+        public static string FetchSignInCode(ApiClient api)
         {
-            string problem = AppConfig.PosUrlProblem(url);
-            if (problem != null) url = AppConfig.LivePosUrl;
+            if (api == null || string.IsNullOrEmpty(api.Token)) return null;
+            Dictionary<string, object> result = api.Post("api/desktop/pos-link", new Dictionary<string, object>(), SignInCodeTimeoutMs);
+            string code = Json.Ok(result) ? Json.Str(Json.Data(result), "code") : null;
+            if (code == null) Log.Info("Sales: no sign-in code (HTTP " + Json.HttpStatus(result) + "), opening the POS screen as it is");
+            return code;
+        }
+
+        // {scheme://host of posUrl}/desktop-signin#code=...&next={path+query of posUrl},
+        // or null when posUrl is not a usable address.
+        public static string SignInUrl(string posUrl, string code)
+        {
+            Uri pos;
+            if (string.IsNullOrEmpty(code) || AppConfig.PosUrlProblem(posUrl) != null
+                || !Uri.TryCreate(posUrl, UriKind.Absolute, out pos)) return null;
+            string origin = pos.GetLeftPart(UriPartial.Authority);
+            return origin + "/desktop-signin#code=" + Uri.EscapeDataString(code)
+                + "&next=" + Uri.EscapeDataString(pos.PathAndQuery);
+        }
+
+        // The address without its #fragment (where the sign-in code travels), for the log.
+        private static string ForLog(string url)
+        {
+            int hash = (url ?? string.Empty).IndexOf('#');
+            return hash >= 0 ? url.Substring(0, hash) + "#..." : url;
+        }
+
+        // Returns null when a browser was started, otherwise why not (for the screen).
+        // `url` is posUrl itself or a page on the same site (the sign-in link).
+        public static string Open(string url, string posUrl)
+        {
+            string problem = AppConfig.PosUrlProblem(url) ?? AppConfig.SameSiteProblem(url, posUrl);
+            if (problem != null) url = AppConfig.PosUrlProblem(posUrl) == null ? posUrl : AppConfig.LivePosUrl;
 
             string profile = ProfileFolder;
             try { Directory.CreateDirectory(profile); }
@@ -51,7 +88,7 @@ namespace DollarCoAttendance
                     start.UseShellExecute = false;
                     start.WorkingDirectory = Path.GetDirectoryName(exe);
                     Process.Start(start);
-                    Log.Info("Sales: opened " + url + " with " + exe);
+                    Log.Info("Sales: opened " + ForLog(url) + " with " + exe);
                     return null;
                 }
                 catch (Exception ex)
@@ -63,12 +100,12 @@ namespace DollarCoAttendance
             try
             {
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                Log.Info("Sales: opened " + url + " in the default browser (no Edge or Chrome found)");
+                Log.Info("Sales: opened " + ForLog(url) + " in the default browser (no Edge or Chrome found)");
                 return null;
             }
             catch (Exception ex)
             {
-                Log.Error("Sales: could not open " + url, ex);
+                Log.Error("Sales: could not open " + ForLog(url), ex);
                 return "The POS screen could not be opened: no web browser was found. Install Microsoft Edge.";
             }
         }

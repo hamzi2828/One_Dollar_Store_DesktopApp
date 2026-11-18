@@ -13,6 +13,9 @@ namespace DollarCoAttendance
     //   result    the server's answer, big: "IN 9:58 am · on time" (green),
     //             "IN 10:25 am · 25 min late" (amber), "OUT 6:05 pm · worked
     //             7 h 35 m" (blue); then back to resting after a few seconds
+    //
+    // Under it all, a big "Break" button: pressed, an amber banner says "Break:
+    // scan your finger" and the next scan starts (or ends) a break.
     public class ReaderPanel : Panel
     {
         private enum Mode { Idle, Person }
@@ -30,6 +33,14 @@ namespace DollarCoAttendance
         private readonly Label metaLabel;
         private readonly ResultCard card;
         private readonly Label messageLabel;
+
+        private readonly RoundButton breakButton;
+        private readonly AlertBox breakBanner;
+        private bool breakAvailable;
+        private bool breakArmed;
+
+        // The Break button was pressed (to arm break mode, or to cancel it).
+        public event EventHandler BreakClicked;
 
         private Mode mode = Mode.Idle;
 
@@ -64,6 +75,21 @@ namespace DollarCoAttendance
             messageLabel = Theme.Label(string.Empty, Theme.FontBody, Theme.TextSecondary);
             messageLabel.TextAlign = ContentAlignment.TopCenter;
 
+            breakButton = Theme.QuietButton("Break", Theme.Warning);
+            breakButton.Font = new Font("Segoe UI", 16, FontStyle.Bold);
+            breakButton.Visible = false;
+            breakButton.TabStop = false;
+            breakButton.Click += delegate
+            {
+                EventHandler handler = BreakClicked;
+                if (handler != null) handler(this, EventArgs.Empty);
+            };
+            breakBanner = new AlertBox();
+            breakBanner.MessageFont = new Font("Segoe UI", 15, FontStyle.Bold);
+            breakBanner.Visible = false;
+
+            Controls.Add(breakButton);
+            Controls.Add(breakBanner);
             Controls.Add(pulse);
             Controls.Add(idleHeadline);
             Controls.Add(idleSubtext);
@@ -100,23 +126,35 @@ namespace DollarCoAttendance
 
             notice.SetBounds(pad, pad, inner, Theme.Px(72));
 
+            // The Break button along the bottom; its banner under the notice.
+            int buttonHeight = Theme.Px(64);
+            int buttonWidth = Math.Min(inner, Theme.Px(340));
+            breakButton.SetBounds((w - buttonWidth) / 2, h - pad - buttonHeight, buttonWidth, buttonHeight);
+            int bottom = h - (breakAvailable ? pad + buttonHeight + Theme.Px(8) : 0);
+            int top = pad + (noticeText != null ? Theme.Px(84) : 0);
+            breakBanner.SetBounds(pad, top, inner, Theme.Px(60));
+            if (BannerShowing) top += Theme.Px(72);
+
             // Resting: the glyph, the line, the supporting text, as one block
             // a little above the middle.
-            int pulseSize = Math.Min(Math.Min(inner * 6 / 10, h * 4 / 10), Theme.Px(240));
-            int blockTop = Math.Max(pad + (noticeText != null ? Theme.Px(84) : 0), (h - pulseSize - Theme.Px(150)) / 2);
+            int room = bottom - top;
+            int pulseSize = Math.Max(Theme.Px(60), Math.Min(Math.Min(inner * 6 / 10, Math.Min(h * 4 / 10, room - Theme.Px(150))), Theme.Px(240)));
+            int blockTop = Math.Max(top, top + (room - pulseSize - Theme.Px(150)) / 2);
+            if (noticeText == null && !BannerShowing && !breakAvailable)
+                blockTop = Math.Max(pad, (h - pulseSize - Theme.Px(150)) / 2);
             pulse.SetBounds((w - pulseSize) / 2, blockTop, pulseSize, pulseSize);
             idleHeadline.SetBounds(pad, blockTop + pulseSize + Theme.Px(12), inner, Theme.Px(44));
             idleSubtext.SetBounds(pad, idleHeadline.Bottom + Theme.Px(4), inner, Theme.Px(80));
             idleAction.SetBounds((w - Theme.Px(180)) / 2, idleSubtext.Top + Theme.Px(56), Theme.Px(180), Theme.Px(42));
 
             // A person: photo, name, what they do, then the result card.
-            int avatarSize = Math.Min(Theme.Px(170), h / 4);
-            int top = Math.Max(pad, (h - avatarSize - Theme.Px(330)) / 2);
-            avatar.SetBounds((w - avatarSize) / 2, top, avatarSize, avatarSize);
+            int avatarSize = Math.Min(Theme.Px(170), bottom / 4);
+            int personTop = Math.Max(pad, (bottom - avatarSize - Theme.Px(330)) / 2);
+            avatar.SetBounds((w - avatarSize) / 2, personTop, avatarSize, avatarSize);
             nameLabel.SetBounds(pad, avatar.Bottom + Theme.Px(10), inner, Theme.Px(56));
             metaLabel.SetBounds(pad, nameLabel.Bottom, inner, Theme.Px(28));
             card.SetBounds(pad, metaLabel.Bottom + Theme.Px(14), inner, Theme.Px(140));
-            messageLabel.SetBounds(pad, card.Bottom + Theme.Px(10), inner, Math.Max(Theme.Px(40), h - card.Bottom - Theme.Px(20)));
+            messageLabel.SetBounds(pad, card.Bottom + Theme.Px(10), inner, Math.Max(Theme.Px(40), bottom - card.Bottom - Theme.Px(20)));
         }
 
         // The resting state and every in-between one ("Reading...", "Not
@@ -182,6 +220,38 @@ namespace DollarCoAttendance
             card.Visible = word != null;
         }
 
+        // The Break button is offered (the reader is ready and the server has
+        // attendance on for this counter).
+        public void SetBreakAvailable(bool available)
+        {
+            if (InvokeRequired) { BeginInvoke(new Action<bool>(SetBreakAvailable), available); return; }
+            if (breakAvailable == available) return;
+            breakAvailable = available;
+            SetModeVisibility();
+        }
+
+        // Break mode on (with the seconds left) or off.
+        public void SetBreakArmed(bool armed, int secondsLeft)
+        {
+            if (InvokeRequired) { BeginInvoke(new Action<bool, int>(SetBreakArmed), armed, secondsLeft); return; }
+            bool changed = armed != breakArmed;
+            breakArmed = armed;
+            if (armed)
+            {
+                breakBanner.ShowMessage("BREAK: scan your finger now" + (secondsLeft > 0 ? "   (" + secondsLeft + ")" : string.Empty), Theme.Warning);
+                breakButton.Text = "Cancel break";
+                breakButton.SetColours(Theme.Warning, Theme.OnBrand, Color.FromArgb(220, 140, 8), Color.Empty);
+            }
+            else
+            {
+                breakButton.Text = "Break";
+                breakButton.SetColours(Theme.CardRaised, Theme.Warning, Color.FromArgb(42, 42, 47), Theme.BorderStrong);
+            }
+            if (changed) SetModeVisibility();
+        }
+
+        private bool BannerShowing { get { return breakArmed && breakAvailable && mode == Mode.Idle; } }
+
         // A standing note over the resting state (offline, punches waiting).
         public void SetNotice(string text, Color accent)
         {
@@ -205,6 +275,8 @@ namespace DollarCoAttendance
             metaLabel.Visible = !idle;
             card.Visible = !idle;
             messageLabel.Visible = !idle;
+            breakButton.Visible = breakAvailable;
+            breakBanner.Visible = BannerShowing;
             Relayout();
         }
     }

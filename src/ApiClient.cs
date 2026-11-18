@@ -61,6 +61,16 @@ namespace DollarCoAttendance
 
         public string BaseUrl { get { return baseUrl; } }
 
+        // This PC's name (config.DeviceLabel), sent as X-Device-Name with the
+        // app version (X-App-Version) on every request, so the website can list
+        // which counter runs which build. Set at start-up and by "PC name".
+        private static volatile string deviceName;
+        public static string DeviceName
+        {
+            get { return deviceName; }
+            set { deviceName = value; }
+        }
+
         // A copy pointed at the same server with another account's token (the
         // manager who signs in to enrol fingerprints). It shares nothing else.
         public ApiClient WithToken(string otherToken)
@@ -116,6 +126,9 @@ namespace DollarCoAttendance
             request.Timeout = timeoutMs;
             request.ReadWriteTimeout = timeoutMs;
             request.UserAgent = AppInfo.ClientId;
+            request.Headers["X-App-Version"] = AppInfo.Version;
+            string device = deviceName;
+            if (!string.IsNullOrEmpty(device)) request.Headers["X-Device-Name"] = Uri.EscapeDataString(device);
             request.KeepAlive = true;
             string bearer = token;
             if (authenticated && !string.IsNullOrEmpty(bearer)) request.Headers["Authorization"] = "Bearer " + bearer;

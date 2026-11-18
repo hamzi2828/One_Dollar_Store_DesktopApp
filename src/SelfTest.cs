@@ -103,6 +103,32 @@ namespace DollarCoAttendance
             Check(dup.Headline == "ALREADY IN" && dup.Speech("Ali") == "Ali, already marked.", "double tap");
             Check(late.Speech("Ali") == "Ali, clocked in, 12 minutes late.", "spoken words");
 
+            // Breaks (the Break button, then a scan).
+            PunchResult breakStart = PunchResult.From(Parse("{\"data\":{\"kind\":\"break_start\",\"at\":\"2026-10-19T09:10:00Z\",\"name\":\"Ali Khan\","
+                + "\"breakMinutes\":0,\"onBreak\":true,\"breakStartedAt\":\"2026-10-19T09:10:00Z\","
+                + "\"message\":\"Break started 2:10 pm — scan again when you are back\"}}"));
+            Check(breakStart != null && breakStart.IsBreakStart && breakStart.IsBreak && !breakStart.IsOut && !breakStart.IsLate
+                && breakStart.OnBreak && breakStart.BreakStartedAt.HasValue && ShopTime.Clock(breakStart.BreakStartedAt.Value) == "2:10 pm"
+                && breakStart.Headline == "ON BREAK" && breakStart.Accent == Theme.Warning && breakStart.Speech("Ali") == "Ali, break started."
+                && breakStart.Message.StartsWith("Break started 2:10 pm"),
+                "break start: ON BREAK 2:10 pm (amber), not an OUT");
+            PunchResult breakEnd = PunchResult.From(Parse("{\"data\":{\"kind\":\"break_end\",\"at\":\"2026-10-19T09:35:00Z\",\"breakMinutes\":25,"
+                + "\"onBreak\":false,\"breakStartedAt\":null,\"message\":\"Back from break 2:35 pm — 25 min break\"}}"));
+            Check(breakEnd != null && breakEnd.IsBreakEnd && !breakEnd.IsOut && !breakEnd.OnBreak && !breakEnd.BreakStartedAt.HasValue
+                && breakEnd.BreakMinutes == 25 && breakEnd.Headline == "BACK" && breakEnd.Detail == "back from break · 25 min break today"
+                && breakEnd.Accent == Theme.Warning && breakEnd.Speech("Ali") == "Ali, welcome back.",
+                "break end: BACK · 25 min break today (" + (breakEnd != null ? breakEnd.Detail : "none") + ")");
+            Check(!outP.IsBreak && outP.IsOut && !late.IsBreak, "in / out punches are not breaks");
+            Dictionary<string, object> liveBreak = PunchApi.LiveBody("e1", "c1", "PC", PunchApi.BreakAction);
+            Dictionary<string, object> livePlain = PunchApi.LiveBody("e1", "c1", "PC", null);
+            Check((string)liveBreak["action"] == "break" && !livePlain.ContainsKey("action"),
+                "punch body carries action=break only after the Break button");
+            Dictionary<string, object> queuedBody = PunchApi.QueuedBody(new QueuedPunch { ClientId = "c", EmployeeId = "e", Action = "break",
+                ScannedAtUtc = Utc("2026-10-19T09:10:00Z") }, "PC");
+            Check((string)queuedBody["action"] == "break" && (bool)queuedBody["offline"]
+                && !PunchApi.QueuedBody(new QueuedPunch { ClientId = "c", EmployeeId = "e", ScannedAtUtc = DateTime.UtcNow }, "PC").ContainsKey("action"),
+                "queued punch body carries its action");
+
             // The board.
             BoardData b = BoardData.From(Parse("{\"data\":{\"date\":\"2026-10-19\",\"isToday\":true,\"counts\":{\"inNow\":1,\"late\":1,\"notInYet\":1,"
                 + "\"absent\":0,\"onLeave\":1,\"out\":1},\"rows\":[{\"employeeId\":\"a\",\"name\":\"Ali\",\"designation\":\"Cashier\","
@@ -113,6 +139,14 @@ namespace DollarCoAttendance
             Check(b.Rows[0].Pill == "IN · 12 MIN LATE" && b.Rows[0].TimesText == "since 10:12 am" && b.Rows[0].ShiftText == "10:00 am – 6:00 pm",
                 "board row: pill, since, shift (" + b.Rows[0].Pill + " / " + b.Rows[0].TimesText + " / " + b.Rows[0].ShiftText + ")");
             Check(b.Rows[1].ShiftText == "Sick leave" && b.Rows[1].Pill == "ON LEAVE", "leave row");
+            BoardData bb = BoardData.From(Parse("{\"data\":{\"date\":\"2026-10-19\",\"counts\":{\"inNow\":0,\"onBreak\":1},\"rows\":["
+                + "{\"employeeId\":\"a\",\"name\":\"Ali\",\"checkIn\":\"2026-10-19T05:00:00Z\",\"state\":\"break\",\"breakStartedAt\":\"2026-10-19T09:10:00Z\"}]}}"));
+            Check(bb != null && bb.Counts.OnBreak == 1 && bb.Rows[0].Pill == "ON BREAK" && bb.Rows[0].Accent == Theme.Warning
+                && bb.Rows[0].TimesText == "on break since 2:10 pm",
+                "board break row: ON BREAK, since 2:10 pm, amber, counted (" + (bb != null ? bb.Rows[0].TimesText : "none") + ")");
+            Check(BoardCounts.From(Parse("{\"inNow\":2}")).OnBreak == 0, "a board without onBreak counts 0 on break (older server)");
+            StaffMember onBreakPerson = StaffMember.From(Parse("{\"_id\":\"a\",\"name\":\"Ali\",\"state\":{\"kind\":\"break\",\"since\":\"2026-10-19T09:10:00Z\"}}"));
+            Check(onBreakPerson.StateKind == "break" && onBreakPerson.StateSince.HasValue, "employee state kind break (since = break start)");
 
             // Template sync merge.
             var before = new TemplateSet(new List<TemplateCandidate>
@@ -149,6 +183,32 @@ namespace DollarCoAttendance
                 "Sales button: shown without features (older server), follows features.sales otherwise");
             Check(!SessionUser.From(noSales.ToDictionary()).SalesEnabled, "the offline copy of the sign-in keeps features.sales");
 
+            // Settings / Enroll buttons: features.settings and features.enroll.
+            SessionUser locked = SessionUser.From(Json.Data(Parse("{\"data\":{\"user\":{\"id\":\"u\"},\"canEnroll\":false,"
+                + "\"features\":{\"sales\":true,\"settings\":false,\"enroll\":false}}}")));
+            SessionUser open = SessionUser.From(Json.Data(Parse("{\"data\":{\"user\":{\"id\":\"u\"},\"canEnroll\":true,"
+                + "\"features\":{\"sales\":true,\"settings\":true,\"enroll\":true}}}")));
+            Check(oldServer.SettingsEnabled && oldServer.EnrollEnabled && noSales.SettingsEnabled && noSales.EnrollEnabled,
+                "Settings and Enroll shown when the server does not send the keys (older server)");
+            Check(!locked.SettingsEnabled && !locked.EnrollEnabled && open.SettingsEnabled && open.EnrollEnabled,
+                "Settings and Enroll follow features.settings / features.enroll");
+            SessionUser lockedCopy = SessionUser.From(locked.ToDictionary());
+            Check(!lockedCopy.SettingsEnabled && !lockedCopy.EnrollEnabled && lockedCopy.SalesEnabled,
+                "the offline copy of the sign-in keeps features.settings / features.enroll");
+
+            // Sales auto sign-in link.
+            Check(PosLauncher.SignInUrl("https://pos.example.com/admin/pos?x=1", "a b+c/d")
+                == "https://pos.example.com/desktop-signin#code=a%20b%2Bc%2Fd&next=%2Fadmin%2Fpos%3Fx%3D1",
+                "sign-in link: origin + /desktop-signin#code=...&next=path+query (" + PosLauncher.SignInUrl("https://pos.example.com/admin/pos?x=1", "a b+c/d") + ")");
+            Check(PosLauncher.SignInUrl("http://localhost:3000/admin/pos", "k") == "http://localhost:3000/desktop-signin#code=k&next=%2Fadmin%2Fpos",
+                "sign-in link keeps the port");
+            Check(PosLauncher.SignInUrl("not a url", "k") == null && PosLauncher.SignInUrl(AppConfig.LivePosUrl, null) == null,
+                "no sign-in link without a usable address or code");
+            string link = PosLauncher.SignInUrl(AppConfig.LivePosUrl, "k");
+            Check(AppConfig.PosUrlProblem(link) == null && AppConfig.SameSiteProblem(link, AppConfig.LivePosUrl) == null
+                && AppConfig.SameSiteProblem("https://evil.example.com/desktop-signin", AppConfig.LivePosUrl) != null,
+                "the sign-in link opens in the POS window; another site does not");
+
             // JWT expiry claim.
             string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"id\":\"x\",\"exp\":1792800000}")).TrimEnd('=').Replace('+', '-').Replace('/', '_');
             DateTime? exp = SignInOutcome.TokenExpiry("eyJhbGciOiJIUzI1NiJ9." + payload + ".sig");
@@ -170,9 +230,29 @@ namespace DollarCoAttendance
                 QueuedPunch first = OfflineStore.Peek();
                 Check(OfflineStore.QueueCount == 2 && first.ClientId == "c1" && first.ScannedAtUtc == Utc("2026-10-19T05:00:00Z"),
                     "queue survives a restart, oldest first");
+                OfflineStore.Enqueue(new QueuedPunch { ClientId = "c3", EmployeeId = "e1", EmployeeName = "Ali", ScannedAtUtc = Utc("2026-10-19T09:10:00Z"), Action = "break" });
+                OfflineStore.ForgetQueueInMemory();
+                QueuedPunch breakQueued = null, plainQueued = null;
+                foreach (QueuedPunch qp in OfflineStore.QueueSnapshot())
+                {
+                    if (qp.ClientId == "c3") breakQueued = qp;
+                    if (qp.ClientId == "c1") plainQueued = qp;
+                }
+                Check(breakQueued != null && breakQueued.Action == "break" && plainQueued != null && plainQueued.Action == null,
+                    "queue keeps a break's action across a restart (a plain punch has none)");
+                OfflineStore.Remove("c3");
                 OfflineStore.Remove("c1");
                 OfflineStore.Remove("c2");
                 Check(OfflineStore.QueueCount == 0 && !File.Exists(OfflineStore.CurrentQueuePath), "empty queue leaves no file");
+
+                // A queue file saved by 1.5.0 (no "action") still loads.
+                OfflineStore.WriteRawQueueForTest("{\"punches\":[{\"clientId\":\"old1\",\"employeeId\":\"e9\",\"employeeName\":\"Old\","
+                    + "\"scannedAt\":\"2026-10-19T05:00:00.000Z\"}]}");
+                OfflineStore.ForgetQueueInMemory();
+                QueuedPunch oldQueued = OfflineStore.Peek();
+                Check(OfflineStore.QueueCount == 1 && oldQueued.ClientId == "old1" && oldQueued.Action == null,
+                    "a queue file from an older version (no action) still loads");
+                OfflineStore.Remove("old1");
 
                 var set = new TemplateSet(new List<TemplateCandidate> { new TemplateCandidate { EmployeeId = "A", Finger = "right_index", TemplateBase64 = "QUJD" } });
                 OfflineStore.SaveTemplates(set, "2026-10-19T05:00:00.000Z");
@@ -183,6 +263,12 @@ namespace DollarCoAttendance
                 TokenStore.Save("token-abc", DateTime.UtcNow.AddDays(7));
                 StoredToken token = TokenStore.Load();
                 Check(token != null && token.Token == "token-abc" && !token.DueForRenewal, "saved sign-in round trip");
+                TokenStore.Save("token-old", DateTime.UtcNow.AddDays(-1));
+                StoredToken stale = TokenStore.Load();
+                Check(stale != null && stale.Token == "token-old" && stale.DueForRenewal,
+                    "a token past expiry by this PC's clock is kept for the server to judge (and due for renewal)");
+                TokenStore.Save("token-4d", DateTime.UtcNow.AddDays(4));
+                Check(TokenStore.Load().DueForRenewal, "a token with under 5 days left is renewed");
                 TokenStore.Clear();
                 Check(TokenStore.Load() == null, "sign-out forgets the token");
             }
@@ -209,6 +295,30 @@ namespace DollarCoAttendance
             {
                 Say("  info - reader driver not installed on this PC (" + ex.GetType().Name + ") -- the counter would show \"reader software not installed\"");
             }
+
+            // SecuGen: the template blob, and which engine owns which template.
+            var t1 = new byte[400];
+            var t2 = new byte[400];
+            for (int i = 0; i < 400; i++) { t1[i] = (byte)i; t2[i] = (byte)(255 - i); }
+            string packed = Convert.ToBase64String(SecuGenTemplates.Pack(new List<byte[]> { t1, t2 }));
+            List<byte[]> unpacked = SecuGenTemplates.Unpack(packed);
+            Check(SecuGenTemplates.IsOurs(packed) && unpacked != null && unpacked.Count == 2
+                && unpacked[0].Length == 400 && unpacked[0][399] == t1[399] && unpacked[1][0] == t2[0], "SecuGen template blob round trip");
+            Check(SecuGenTemplates.Unpack(packed.Substring(0, 40)) == null, "truncated SecuGen blob refused");
+            var sgCandidate = new TemplateCandidate { EmployeeId = "e1", Finger = "right_index", TemplateBase64 = packed };
+            var dpCandidate = new TemplateCandidate { EmployeeId = "e2", Finger = "right_index", TemplateBase64 = Convert.ToBase64String(new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 }) };
+            Check(SecuGenEngine.Instance.CanUse(sgCandidate) && !SecuGenEngine.Instance.CanUse(dpCandidate)
+                && DigitalPersonaEngine.Instance.CanUse(dpCandidate) && !DigitalPersonaEngine.Instance.CanUse(sgCandidate),
+                "each engine uses only its own templates");
+
+            string sg = SecuGenEngine.Instance.SelfTest();
+            Say(sg == null
+                ? "  info - SecuGen engine (sgfplib.dll) loads"
+                : "  info - SecuGen engine not available (" + sg + ") -- needed only with a SecuGen reader");
+            ReaderSetup.SecuGenUsb usb = ReaderSetup.FindSecuGenUsb();
+            Say(usb.Present
+                ? "  info - SecuGen reader plugged in: " + usb.Name + (usb.DriverMissing ? " -- NO DRIVER (Device Manager code " + usb.ProblemCode + ")" : " -- driver OK")
+                : "  info - no SecuGen reader plugged in");
         }
 
         // ------------------------------------------------------------ against a test server

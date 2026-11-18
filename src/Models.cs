@@ -23,6 +23,16 @@ namespace DollarCoAttendance
         // is never lost by an upgrade on one side only.
         public bool SalesEnabled = true;
 
+        // features.settings: show the Settings button beside "Sign out".
+        // features.enroll: show the "Enroll fingerprints" button. Both true
+        // when the server does not send them (an older server), as before.
+        public bool SettingsEnabled = true;
+        public bool EnrollEnabled = true;
+
+        // features.attendance: the Break button on the reader. True when the
+        // server does not send it (an older server).
+        public bool AttendanceEnabled = true;
+
         // What the counter needs: without both, it cannot do its job.
         public bool CanRunDesk { get { return CanView && CanPunch; } }
 
@@ -42,6 +52,9 @@ namespace DollarCoAttendance
             s.CanEnroll = Json.Bool(data, "canEnroll");
             Dictionary<string, object> features = Json.Obj(data, "features");
             if (features != null && features.ContainsKey("sales")) s.SalesEnabled = Json.Bool(features, "sales");
+            if (features != null && features.ContainsKey("settings")) s.SettingsEnabled = Json.Bool(features, "settings");
+            if (features != null && features.ContainsKey("enroll")) s.EnrollEnabled = Json.Bool(features, "enroll");
+            if (features != null && features.ContainsKey("attendance")) s.AttendanceEnabled = Json.Bool(features, "attendance");
             return s.Id == null ? null : s;
         }
 
@@ -60,6 +73,9 @@ namespace DollarCoAttendance
             data["canEnroll"] = CanEnroll;
             var features = new Dictionary<string, object>();
             features["sales"] = SalesEnabled;
+            features["settings"] = SettingsEnabled;
+            features["enroll"] = EnrollEnabled;
+            features["attendance"] = AttendanceEnabled;
             data["features"] = features;
             return data;
         }
@@ -118,7 +134,7 @@ namespace DollarCoAttendance
         public string PhotoUrl;
         public int FingerCount;
         public List<FingerInfo> Enrolled = new List<FingerInfo>();
-        public string StateKind;      // not_in | in | out
+        public string StateKind;      // not_in | in | break | out (since = break start)
         public DateTime? StateSince;
         public DateTime? StateOut;
 
@@ -243,7 +259,7 @@ namespace DollarCoAttendance
     // The server's answer to one fingerprint punch (POST /api/desktop/punch).
     public class PunchResult
     {
-        public string Kind;            // in | out
+        public string Kind;            // in | out | break_start | break_end
         public DateTime? At;
         public string EmployeeId;
         public string Name;
@@ -258,6 +274,9 @@ namespace DollarCoAttendance
         public bool Repeated;
         public string ShiftName;
         public string Message;
+        public int BreakMinutes;       // total break today
+        public bool OnBreak;
+        public DateTime? BreakStartedAt;
 
         public static PunchResult From(Dictionary<string, object> result)
         {
@@ -279,17 +298,25 @@ namespace DollarCoAttendance
             p.Repeated = Json.Bool(d, "repeated");
             p.ShiftName = Json.Str(d, "shiftName");
             p.Message = Json.Str(d, "message") ?? Json.Message(result);
+            p.BreakMinutes = Json.Int(d, "breakMinutes");
+            p.OnBreak = Json.Bool(d, "onBreak");
+            p.BreakStartedAt = Json.Time(d, "breakStartedAt");
             return p.Kind == null ? null : p;
         }
 
         public bool IsOut { get { return Kind == "out"; } }
         public bool IsLate { get { return Kind == "in" && LateMinutes > 0; } }
+        public bool IsBreakStart { get { return Kind == "break_start"; } }
+        public bool IsBreakEnd { get { return Kind == "break_end"; } }
+        public bool IsBreak { get { return IsBreakStart || IsBreakEnd; } }
 
         // The big word on the result card.
         public string Headline
         {
             get
             {
+                if (IsBreakStart) return "ON BREAK";
+                if (IsBreakEnd) return "BACK";
                 if (Duplicate) return IsOut ? "ALREADY OUT" : "ALREADY IN";
                 return IsOut ? "OUT" : "IN";
             }
@@ -301,6 +328,8 @@ namespace DollarCoAttendance
             get
             {
                 if (Duplicate) return "already marked a moment ago";
+                if (IsBreakStart) return "scan again when you are back";
+                if (IsBreakEnd) return BreakMinutes > 0 ? "back from break · " + ShopTime.Duration(BreakMinutes) + " break today" : "back from break";
                 if (IsOut)
                 {
                     string line = "worked " + ShopTime.Duration(WorkedMinutes);
@@ -313,12 +342,13 @@ namespace DollarCoAttendance
             }
         }
 
-        // Green in on time, amber late, blue out, grey a double tap.
+        // Green in on time, amber late or a break, blue out, grey a double tap.
         public Color Accent
         {
             get
             {
                 if (Duplicate) return Theme.Neutral;
+                if (IsBreak) return Theme.Warning;
                 if (IsOut) return Theme.Info;
                 return IsLate ? Theme.Warning : Theme.Success;
             }
@@ -329,6 +359,8 @@ namespace DollarCoAttendance
         {
             string who = string.IsNullOrEmpty(firstName) ? string.Empty : firstName + ", ";
             if (Duplicate) return who + "already marked.";
+            if (IsBreakStart) return who + "break started.";
+            if (IsBreakEnd) return who + "welcome back.";
             if (IsOut) return who + "clocked out. Thank you.";
             if (LateMinutes > 0) return who + "clocked in, " + LateMinutes + (LateMinutes == 1 ? " minute" : " minutes") + " late.";
             return who + "clocked in.";
@@ -350,9 +382,10 @@ namespace DollarCoAttendance
         public string LeaveType;
         public DateTime? CheckIn;
         public DateTime? CheckOut;
-        public string State;          // in | out | not_in | absent | leave | off | holiday | missing_out | queued | problem
+        public string State;          // in | break | out | not_in | absent | leave | off | holiday | missing_out | queued | problem
         public string Status;
         public int LateMinutes;
+        public DateTime? BreakStartedAt;
         public string LocalNote;      // for queued / problem rows
 
         public static BoardRow From(Dictionary<string, object> row)
@@ -373,6 +406,7 @@ namespace DollarCoAttendance
                 State = Json.Str(row, "state") ?? "off",
                 Status = Json.Str(row, "status") ?? string.Empty,
                 LateMinutes = Json.Int(row, "lateMinutes"),
+                BreakStartedAt = Json.Time(row, "breakStartedAt"),
             };
         }
 
@@ -402,6 +436,7 @@ namespace DollarCoAttendance
                 {
                     case "in": return LateMinutes > 0 ? "IN · " + ShopTime.Duration(LateMinutes).ToUpperInvariant() + " LATE" : "IN";
                     case "out": return "OUT";
+                    case "break": return "ON BREAK";
                     case "not_in": return "NOT IN YET";
                     case "absent": return "ABSENT";
                     case "leave": return "ON LEAVE";
@@ -420,6 +455,7 @@ namespace DollarCoAttendance
             get
             {
                 if (State == "queued" || State == "problem") return LocalNote ?? string.Empty;
+                if (State == "break" && BreakStartedAt.HasValue) return "on break since " + ShopTime.Clock(BreakStartedAt.Value);
                 if (CheckIn.HasValue && CheckOut.HasValue) return ShopTime.Clock(CheckIn.Value) + " → " + ShopTime.Clock(CheckOut.Value);
                 if (CheckIn.HasValue) return "since " + ShopTime.Clock(CheckIn.Value);
                 return string.Empty;
@@ -434,6 +470,7 @@ namespace DollarCoAttendance
                 {
                     case "in": return LateMinutes > 0 ? Theme.Warning : Theme.Success;
                     case "out": return Theme.Info;
+                    case "break": return Theme.Warning;
                     case "not_in": return Theme.TextSecondary;
                     case "absent":
                     case "problem": return Theme.Danger;
@@ -448,7 +485,7 @@ namespace DollarCoAttendance
 
     public class BoardCounts
     {
-        public int Total, Scheduled, InNow, Out, Late, NotInYet, Absent, OnLeave, MissingOut, Off;
+        public int Total, Scheduled, InNow, Out, Late, NotInYet, Absent, OnLeave, MissingOut, Off, OnBreak;
 
         public static BoardCounts From(Dictionary<string, object> c)
         {
@@ -465,6 +502,7 @@ namespace DollarCoAttendance
                 OnLeave = Json.Int(c, "onLeave"),
                 MissingOut = Json.Int(c, "missingOut"),
                 Off = Json.Int(c, "off"),
+                OnBreak = Json.Int(c, "onBreak"),
             };
         }
     }

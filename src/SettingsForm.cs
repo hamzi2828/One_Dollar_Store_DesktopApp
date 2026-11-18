@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Printing;
 using System.Windows.Forms;
 
 namespace DollarCoAttendance
@@ -17,7 +18,10 @@ namespace DollarCoAttendance
         private TextBox posBox;
         private CheckBox soundBox;
         private CheckBox voiceBox;
+        private ComboBox printerBox;
         private AlertBox statusBox;
+
+        private const string AutomaticPrinter = "(automatic)";
 
         public SettingsForm(AppConfig current)
         {
@@ -51,7 +55,7 @@ namespace DollarCoAttendance
             Theme.PrepareForDpi(this);
             SuspendLayout();
             Text = AppInfo.Name + " — Settings";
-            ClientSize = new Size(P(540), P(654));
+            ClientSize = new Size(P(540), P(746));
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -62,7 +66,7 @@ namespace DollarCoAttendance
             Font = Theme.FontBody;
             if (Theme.AppIcon != null) Icon = Theme.AppIcon;
 
-            var header = new HeaderBand("Settings", "Server, this PC's name, Sales screen, sound", false);
+            var header = new HeaderBand("Settings", "Server, PC name, Sales, sound, label printer", false);
             header.SetBounds(0, 0, ClientSize.Width, P(70));
 
             int x = P(28), width = ClientSize.Width - P(56);
@@ -101,21 +105,42 @@ namespace DollarCoAttendance
             voiceBox.Checked = current.VoiceOn;
             voiceBox.SetBounds(x, P(406), width, P(28));
 
+            var printerLabel = Theme.Label("LABEL PRINTER (STICKERS FROM THE WEBSITE)", Theme.FontLabel, Theme.TextSecondary);
+            printerLabel.SetBounds(x, P(446), width, P(16));
+            printerBox = new ComboBox();
+            printerBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            printerBox.Font = Theme.FontBody;
+            printerBox.Items.Add(AutomaticPrinter);
+            try
+            {
+                foreach (string name in PrinterSettings.InstalledPrinters) printerBox.Items.Add(name);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Could not list the installed printers", ex);
+            }
+            if (!string.IsNullOrEmpty(current.LabelPrinter) && !printerBox.Items.Contains(current.LabelPrinter))
+                printerBox.Items.Add(current.LabelPrinter);
+            printerBox.SelectedItem = string.IsNullOrEmpty(current.LabelPrinter) ? AutomaticPrinter : current.LabelPrinter;
+            printerBox.SetBounds(x, P(464), width, P(30));
+            var printerHint = Theme.Label("Automatic = the first printer named Xprinter, XP- or Label.", Theme.FontSmall, Theme.TextMuted);
+            printerHint.SetBounds(x, P(504), width, P(18));
+
             statusBox = new AlertBox();
-            statusBox.SetBounds(x, P(446), width, P(84));
+            statusBox.SetBounds(x, P(538), width, P(84));
 
             var pathLabel = Theme.Label("Saved to " + (current.ConfigPath ?? AppConfig.FilePath), Theme.FontSmall, Theme.TextMuted);
             pathLabel.AutoEllipsis = true;
-            pathLabel.SetBounds(x, P(538), width, P(18));
+            pathLabel.SetBounds(x, P(630), width, P(18));
 
             var versionLabel = Theme.Label(AppInfo.Label, Theme.FontSmall, Theme.TextMuted);
-            versionLabel.SetBounds(x, P(596), P(140), P(18));
+            versionLabel.SetBounds(x, P(688), P(140), P(18));
 
             var saveButton = Theme.PrimaryButton("Save and restart");
-            saveButton.SetBounds(ClientSize.Width - x - P(190), P(582), P(190), P(44));
+            saveButton.SetBounds(ClientSize.Width - x - P(190), P(674), P(190), P(44));
             saveButton.Click += Save_Click;
             var cancelButton = Theme.QuietButton("Cancel", Theme.TextSecondary);
-            cancelButton.SetBounds(saveButton.Left - P(12) - P(120), P(582), P(120), P(44));
+            cancelButton.SetBounds(saveButton.Left - P(12) - P(120), P(674), P(120), P(44));
             cancelButton.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
 
             Controls.Add(header);
@@ -130,6 +155,9 @@ namespace DollarCoAttendance
             Controls.Add(posHint);
             Controls.Add(soundBox);
             Controls.Add(voiceBox);
+            Controls.Add(printerLabel);
+            Controls.Add(printerBox);
+            Controls.Add(printerHint);
             Controls.Add(statusBox);
             Controls.Add(pathLabel);
             Controls.Add(versionLabel);
@@ -184,21 +212,26 @@ namespace DollarCoAttendance
                 return;
             }
             string device = deviceBox.Text.Trim();
+            string printer = printerBox.SelectedItem as string;
+            if (printer == AutomaticPrinter) printer = string.Empty;
+            printer = printer ?? string.Empty;
             if (current.LoadError == null && url == current.ApiBaseUrl && device == current.DeviceLabel && pos == current.PosUrl
-                && soundBox.Checked == current.SoundOn && voiceBox.Checked == current.VoiceOn)
+                && soundBox.Checked == current.SoundOn && voiceBox.Checked == current.VoiceOn
+                && printer == (current.LabelPrinter ?? string.Empty))
             {
                 DialogResult = DialogResult.Cancel;
                 Close();
                 return;
             }
-            string saveError = AppConfig.Save(url, device, pos, soundBox.Checked, voiceBox.Checked);
+            string saveError = AppConfig.Save(url, device, pos, soundBox.Checked, voiceBox.Checked, printer);
             if (saveError != null)
             {
                 Log.Error("Settings not saved: " + saveError);
                 statusBox.ShowMessage(saveError, Theme.Danger);
                 return;
             }
-            Log.Info("Settings saved: server " + url + ", PC " + device + ", sales " + pos + ", sound " + soundBox.Checked + ", voice " + voiceBox.Checked);
+            Log.Info("Settings saved: server " + url + ", PC " + device + ", sales " + pos + ", sound " + soundBox.Checked + ", voice " + voiceBox.Checked
+                + ", label printer " + (printer.Length > 0 ? printer : "automatic"));
             DialogResult = DialogResult.OK;
             Close();
         }
