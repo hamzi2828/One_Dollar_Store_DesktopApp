@@ -17,3 +17,6 @@ lib/*.dll
 sounds/*.mp3
 # SecuGen FDx SDK Pro DLLs (licence, like the DigitalPersona ones).
 lib/secugen/*.dll
+
+# Fingerprint reader runtime file
+.sgfplib_config.ini
